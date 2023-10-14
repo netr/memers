@@ -1,6 +1,10 @@
 use ethers_core::abi::Abi;
 use std::fs;
 
+pub mod uniswap_v2_factory;
+pub mod uniswap_v2_pair;
+pub mod uniswap_v2_router;
+
 pub struct ABI {
     pub erc20: Abi,
     pub uniswap_v2_router: Abi,
