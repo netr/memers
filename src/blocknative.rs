@@ -27,6 +27,14 @@ impl From<BlockPrices> for GasPrediction {
     }
 }
 
+/// Get the current block prices from Blocknative
+/// https://docs.blocknative.com/gas-platform/gas-prices
+///
+/// # Example
+/// ```no-run
+/// let response = blocknative::get_block_prices("api_key").await?;
+/// let prediction: GasPrediction = response.into();
+/// ```
 pub async fn get_block_prices(api_key: &str) -> Result<BlockPrices> {
     let mut headers = header::HeaderMap::new();
     headers.insert("Authorization", header::HeaderValue::from_str(api_key)?);

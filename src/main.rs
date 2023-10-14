@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
 
     let response = blocknative::get_block_prices(env.blocknative_api_key.as_str()).await?;
-    let prediction: GasPrediction = response.into();
+    let prediction = GasPrediction::from(response);
 
     info!("Base Fee: {}", prediction.base_fee);
     info!("Gas Price: {:?}", prediction.gas_price);
