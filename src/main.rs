@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+mod blocknative;
 mod constants;
 mod utils;
 
@@ -29,8 +30,24 @@ async fn main() -> Result<()> {
 
     let http_provider = Provider::<Http>::try_from(env.https_url.as_str())
         .expect("could not instantiate HTTP Provider");
-
     let ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
+
+    let response = blocknative::get_block_prices(env.blocknative_api_key.as_str()).await?;
+    info!("Next Block Base Fee: {}", response.next_base_fee()?);
+    info!(
+        "Gas Price: {:?}",
+        response.estimated_price()?.price_to_u256()
+    );
+    info!(
+        "Max Prio Fee: {:?}",
+        response.estimated_price()?.max_prio_fee_to_u256()
+    );
+    info!(
+        "Max fee: {:?}",
+        response.estimated_price()?.max_fee_to_u256()
+    );
+    return Ok(());
+
     let mut stream = ws_provider.subscribe_blocks().await?;
     while let Some(block) = stream.next().await {
         let start_time = std::time::Instant::now();
