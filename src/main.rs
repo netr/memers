@@ -4,6 +4,7 @@ mod blocknative;
 mod constants;
 mod utils;
 
+use crate::blocknative::GasPrediction;
 use crate::constants::Env;
 use crate::utils::{convert_utc_to_local_str, setup_logger, Gas};
 use anyhow::{anyhow, Error, Result};
@@ -33,19 +34,13 @@ async fn main() -> Result<()> {
     let ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
 
     let response = blocknative::get_block_prices(env.blocknative_api_key.as_str()).await?;
-    info!("Next Block Base Fee: {}", response.next_base_fee()?);
-    info!(
-        "Gas Price: {:?}",
-        response.estimated_price()?.price_to_u256()
-    );
-    info!(
-        "Max Prio Fee: {:?}",
-        response.estimated_price()?.max_prio_fee_to_u256()
-    );
-    info!(
-        "Max fee: {:?}",
-        response.estimated_price()?.max_fee_to_u256()
-    );
+    let prediction: GasPrediction = response.into();
+
+    info!("Base Fee: {}", prediction.base_fee);
+    info!("Gas Price: {:?}", prediction.gas_price);
+    info!("Max Prio Fee: {:?}", prediction.max_prio_fee);
+    info!("Max fee: {:?}", prediction.max_fee);
+    info!("Next Block Base Fee: {}", prediction.next_base_fee);
     return Ok(());
 
     let mut stream = ws_provider.subscribe_blocks().await?;

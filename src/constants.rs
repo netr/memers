@@ -1,9 +1,3 @@
-use ethers::{
-    prelude::Lazy,
-    types::{Address, Bytes},
-};
-use std::str::FromStr;
-
 pub const WETH_ADDRESS: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 pub const DEAD_ADDRESS: &str = "0x000000000000000000000000000000000000dead";
 pub const UNISWAP_V2_FACTORY_ADDRESS: &str = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f";
