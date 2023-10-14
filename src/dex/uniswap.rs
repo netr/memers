@@ -1,18 +1,16 @@
 use anyhow::{anyhow, Result};
-use ethers_contract::{decode_function_data, BaseContract};
+use ethers_contract::BaseContract;
 use ethers_core::{
-    abi::{FixedBytes, Function},
-    types::{Address, Bytes, Uint8, H160, U256},
+    abi::FixedBytes,
+    types::{Address, Bytes, Uint8, U256},
 };
 use log::info;
 
 // Type aliases for Uniswap's `swap` return types
 type SwapTokensForEth = (U256, U256, Vec<Address>, Address, U256);
 type SwapEthForTokens = (U256, Vec<Address>, Address, U256);
-type PairSwap = (U256, U256, Address, Bytes);
 type AddLiquidity = (Address, Address, U256, U256, U256, U256, Address, U256);
 type AddLiquidityETH = (Address, U256, U256, U256, Address, U256);
-type CreatePair = (H160, H160);
 type RemoveLiquidityEthWithPermit = (
     Address,
     U256,
@@ -41,12 +39,13 @@ type RemoveLiquidityWithPermit = (
 type RemoveLiquidity = (Address, Address, U256, U256, U256, Address, U256);
 type RemoveLiquidityETH = (Address, U256, U256, U256, Address, U256);
 
+pub const PAIR_CREATED_TOPIC: &str =
+    "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9";
+
 #[derive(Debug, Clone)]
 pub enum UniswapV2RouterFuncs {
     SwapTokensForEth(SwapTokensForEth),
     SwapEthForTokens(SwapEthForTokens),
-    PairSwap(PairSwap),
-    CreatePair(CreatePair),
     AddLiquidity(AddLiquidity),
     AddLiquidityETH(AddLiquidityETH),
     RemoveLiquidityEthWithPermit(RemoveLiquidityEthWithPermit),
@@ -57,42 +56,51 @@ pub enum UniswapV2RouterFuncs {
 
 impl UniswapV2RouterFuncs {
     pub fn from_input(contract: BaseContract, tx_input: &Bytes) -> Result<UniswapV2RouterFuncs> {
-        let result = contract.as_ref().functions().find_map(|function| {
-            for (prefix, mapper) in FUNCTION_PREFIXES.iter() {
+        for (prefix, mapper) in FUNCTION_PREFIXES.iter() {
+            let result = contract.as_ref().functions().find_map(|function| {
                 if function.name.starts_with(prefix) {
-                    if let Some(mapped_enum) = mapper(function, tx_input) {
+                    if let Some(mapped_enum) = mapper(&contract, tx_input) {
                         return Some(mapped_enum);
                     }
                 }
+                None
+            });
+            if let Some(result) = result {
+                return Ok(result);
             }
-            None
-        });
-        result.ok_or(anyhow!("No matching function"))
+        }
+
+        Err(anyhow!("No matching function"))
     }
 }
 
-const FUNCTION_PREFIXES: &[(&str, fn(&Function, &Bytes) -> Option<UniswapV2RouterFuncs>)] = &[
+type UniswapV2RouterFuncMapper = fn(&BaseContract, &Bytes) -> Option<UniswapV2RouterFuncs>;
+
+const FUNCTION_PREFIXES: &[(&str, UniswapV2RouterFuncMapper)] = &[
     ("swap", map_swap_function),
     ("addLiquidity", map_liquidity_function),
     ("removeLiquidity", map_remove_liquidity_function),
 ];
 
-fn map_swap_function(function: &Function, tx_input: &Bytes) -> Option<UniswapV2RouterFuncs> {
-    if let Ok(func) = decode_function_data::<SwapEthForTokens, _>(function, tx_input, true) {
+fn map_swap_function(contract: &BaseContract, tx_input: &Bytes) -> Option<UniswapV2RouterFuncs> {
+    if let Ok(func) = contract.decode_input::<SwapEthForTokens, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::SwapEthForTokens(func));
     }
-    if let Ok(func) = decode_function_data::<SwapTokensForEth, _>(function, tx_input, true) {
+    if let Ok(func) = contract.decode_input::<SwapTokensForEth, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::SwapTokensForEth(func));
     }
 
     None
 }
 
-fn map_liquidity_function(function: &Function, tx_input: &Bytes) -> Option<UniswapV2RouterFuncs> {
-    if let Ok(func) = decode_function_data::<AddLiquidity, _>(function, tx_input, true) {
+fn map_liquidity_function(
+    contract: &BaseContract,
+    tx_input: &Bytes,
+) -> Option<UniswapV2RouterFuncs> {
+    if let Ok(func) = contract.decode_input::<AddLiquidity, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::AddLiquidity(func));
     }
-    if let Ok(func) = decode_function_data::<AddLiquidityETH, _>(function, tx_input, true) {
+    if let Ok(func) = contract.decode_input::<AddLiquidityETH, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::AddLiquidityETH(func));
     }
 
@@ -100,22 +108,19 @@ fn map_liquidity_function(function: &Function, tx_input: &Bytes) -> Option<Unisw
 }
 
 fn map_remove_liquidity_function(
-    function: &Function,
+    contract: &BaseContract,
     tx_input: &Bytes,
 ) -> Option<UniswapV2RouterFuncs> {
-    if let Ok(func) =
-        decode_function_data::<RemoveLiquidityEthWithPermit, _>(function, tx_input, true)
-    {
+    if let Ok(func) = contract.decode_input::<RemoveLiquidityEthWithPermit, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidityEthWithPermit(func));
     }
-    if let Ok(func) = decode_function_data::<RemoveLiquidityWithPermit, _>(function, tx_input, true)
-    {
+    if let Ok(func) = contract.decode_input::<RemoveLiquidityWithPermit, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidityWithPermit(func));
     }
-    if let Ok(func) = decode_function_data::<RemoveLiquidity, _>(function, tx_input, true) {
+    if let Ok(func) = contract.decode_input::<RemoveLiquidity, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidity(func));
     }
-    if let Ok(func) = decode_function_data::<RemoveLiquidityETH, _>(function, tx_input, true) {
+    if let Ok(func) = contract.decode_input::<RemoveLiquidityETH, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidityETH(func));
     }
 

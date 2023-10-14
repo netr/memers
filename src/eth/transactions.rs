@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use ethers::prelude::H256;
 use ethers_core::types::{Address, BlockId, Bytes, H160, U256, U64};
 use ethers_providers::{Http, Middleware, Provider};
-use log::debug;
 
 pub async fn get_transactions_from_block(
     provider: Provider<Http>,
@@ -26,7 +25,6 @@ pub async fn get_transactions_from_block(
                     .collect::<Vec<Transaction>>();
 
                 block_with_tx.transactions = txs;
-                debug!("{:?}", block_with_tx);
                 return Ok(block_with_tx);
             }
             None => {
@@ -34,7 +32,6 @@ pub async fn get_transactions_from_block(
             }
         },
         Err(e) => {
-            debug!("{:?}", e);
             return Err(anyhow!("Could not get block with transactions, {}", e));
         }
     }

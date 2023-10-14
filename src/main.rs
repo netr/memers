@@ -1,15 +1,19 @@
 #![allow(dead_code)]
 
+use std::str::FromStr;
+
 use anyhow::Result;
+use ethers_core::types::H256;
 use memers::constants::Env;
 use memers::dex::uniswap;
+use memers::eth;
 use memers::eth::transactions::Transaction;
 use memers::utils::setup_logger;
 use memers::{abi::ABI, constants::UNISWAP_V2_ROUTER_ADDRESS};
 
 use ethers_contract::BaseContract;
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error};
+use log::{debug, error, info};
 
 #[tokio::main]
 #[allow(unreachable_code)]
@@ -27,25 +31,92 @@ async fn main() -> Result<()> {
     let abis = ABI::new();
     let router = BaseContract::from(abis.uniswap_v2_router.clone());
 
-    let mut stream = ws_provider.subscribe_pending_txs().await?;
-    while let Some(tx_hash) = stream.next().await {
-        match http_provider.get_transaction(tx_hash).await {
-            Ok(tx) => match tx {
-                Some(tx) => {
-                    let tx = Transaction::from(tx.to_owned());
-                    if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
-                        continue;
+    // run this in a tokio task
+    tokio::spawn(async move {
+        let mut stream = ws_provider
+            .subscribe_pending_txs()
+            .await
+            .expect("should work");
+        while let Some(tx_hash) = stream.next().await {
+            match http_provider.get_transaction(tx_hash).await {
+                Ok(tx) => match tx {
+                    Some(tx) => {
+                        let tx = Transaction::from(tx.to_owned());
+                        if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
+                            continue;
+                        }
+                        match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
+                            Some(_) => {}
+                            None => {}
+                        }
                     }
-                    match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
-                        Some(_) => {}
-                        None => {}
+                    None => error!("Could not get transaction {}", tx_hash),
+                },
+                Err(e) => error!("[get_tx] error: {:?} - hash: {}", e, tx_hash),
+            }
+        }
+    });
+
+    // let http_provider = Provider::<Http>::try_from(env.https_url.as_str())
+    //     .expect("could not instantiate HTTP Provider");
+
+    // let abis = ABI::new();
+    // let router = BaseContract::from(abis.uniswap_v2_router.clone());
+
+    let block_http_provider = Provider::<Http>::try_from(env.https_url.as_str()).unwrap();
+    let block_ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
+
+    // run this in a tokio task
+    tokio::spawn(async move {
+        let mut stream = block_ws_provider
+            .subscribe_blocks()
+            .await
+            .expect("should work");
+        while let Some(block) = stream.next().await {
+            debug!("New block: {}", block.number.unwrap());
+            match eth::transactions::get_transactions_from_block(
+                block_http_provider.clone(),
+                ethers_core::types::BlockId::Hash(block.hash.unwrap()),
+            )
+            .await
+            {
+                Ok(block_with_txs) => {
+                    for tx in block_with_txs.transactions {
+                        match block_http_provider
+                            .clone()
+                            .get_transaction_receipt(tx.hash)
+                            .await
+                        {
+                            Ok(receipt) => match receipt {
+                                Some(receipt) => {
+                                    receipt.logs.iter().for_each(|log| {
+                                        if log.topics.len() > 0 {
+                                            let topic = log.topics[0];
+                                            if topic
+                                                .eq(&H256::from_str(uniswap::PAIR_CREATED_TOPIC)
+                                                    .unwrap())
+                                            {
+                                                info!(
+                                                    "[[** PAIR CREATED **]] from: {} / to: {} / address: {:?} / topics: {:?} / data: {:?}",
+                                                    tx.from, tx.to, log.address, log.topics, log.data
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                                None => error!("Could not get receipt for tx {}", tx.hash),
+                            },
+                            Err(e) => error!("Could not get receipt for tx {}: {}", tx.hash, e),
+                        };
                     }
                 }
-                None => error!("Could not get transaction {}", tx_hash),
-            },
-            Err(e) => error!("[get_tx] error: {:?} - hash: {}", e, tx_hash),
+                Err(e) => error!("Could not get transactions from block: {}", e),
+            }
         }
-    }
+    });
+
+    // wait until user exists
+    let _ = tokio::signal::ctrl_c().await;
 
     Ok(())
 }
