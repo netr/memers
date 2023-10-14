@@ -7,3 +7,6 @@ Please note that this project is still in development and is not ready for produ
 
 ## Todo
 - [ ] Setup all of the uniswap / lp locking / token contract abis and implement them
+- [ ] Create a transaction pool to store transactions and check for duplicates
+- [ ] Setup a channel to send transactions to the pool
+- [ ] Every block check if the transactions have failed or succeeded and send a message to the channel
