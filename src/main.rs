@@ -4,9 +4,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use ethers_core::abi::Uint;
 use ethers_core::types::{Address, H256, U256, H160};
-use memers::abi::uniswap_v2_factory::UniswapV2Factory;
+use memers::abi::uniswap_v2_factory::{UniswapV2Factory, PairCreatedFilter};
 use memers::constants::{Env, UNISWAP_V2_FACTORY_ADDRESS};
 use memers::dex::uniswap;
 use memers::eth;
@@ -14,8 +13,7 @@ use memers::eth::transactions::Transaction;
 use memers::utils::setup_logger;
 use memers::{abi::ABI, constants::UNISWAP_V2_ROUTER_ADDRESS};
 
-use ethers_contract::{BaseContract, EthEvent, abigen, MultiAbigen};
-use ethers::contract::Abigen;
+use ethers_contract::{BaseContract, EthEvent};
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
 use log::{debug, error, info};
 #[derive(Debug, Clone, EthEvent)]
@@ -26,10 +24,14 @@ pub struct PairCreated {
     pub nonce: U256
 }
 
+#[derive(Debug, Clone)]
+struct TxHash(H256);
+
+
 #[tokio::main]
 #[allow(unreachable_code)]
 async fn main() -> Result<()> {
-    setup_logger()?;
+    setup_logger(log::LevelFilter::Debug)?;
     dotenvy::dotenv().ok();
     debug!("Starting up memers");
 
@@ -69,7 +71,7 @@ async fn main() -> Result<()> {
                             None => {}
                         }
                     }
-                    None => error!("Could not get transaction {}", tx_hash),
+                    None => error!("Could not get transaction {:?}", TxHash(tx_hash)),
                 },
                 Err(e) => error!("[get_tx] error: {:?} - hash: {}", e, tx_hash),
             }
@@ -84,10 +86,14 @@ async fn main() -> Result<()> {
 
     let block_http_provider = Provider::<Http>::try_from(env.https_url.as_str()).unwrap();
     let block_ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
-    let abis = ABI::new();
+    let _abis = ABI::new();
+    
     let client = Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
     let factory = UniswapV2Factory::new(H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(), client);
-    // abigen!(uniswap_factory, abis.uniswap_v2_factory.clone());
+    let event = factory.event::<PairCreatedFilter>();
+    let _watcher = event.stream().await.unwrap();
+
+    let pair_created_hash = H256::from_str(uniswap::PAIR_CREATED_TOPIC).unwrap();
 
     // run this in a tokio task
     tokio::spawn(async move {
@@ -114,17 +120,17 @@ async fn main() -> Result<()> {
                                 receipt.logs.iter().for_each(|log| {
                                     if log.topics.len() > 0 {
                                         let topic = log.topics[0];
-                                        if topic
-                                            .eq(&H256::from_str(uniswap::PAIR_CREATED_TOPIC)
-                                                .unwrap())
-                                        {
-                                            let event = factory.clone().decode_event::<PairCreated>("PairCreated", log.topics.clone(), tx.input.clone()).unwrap();                                                    
-
-                                            info!(
-                                                "[[** PAIR CREATED **]] from: {} / to: {} / address: {:?} / topics: {:?} / data: {:?}",
-                                                tx.from, tx.to, log.address, log.topics, log.data
-                                            ); 
-                                            info!("[[** PAIR CREATED **]] event: {:?}", event)
+                                        if topic.eq(&pair_created_hash) {
+                                            match factory.clone().decode_event::<PairCreatedFilter>("PairCreated", log.topics.clone(), tx.input.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[** PAIR CREATED **]] from: {} / to: {} / address: {:?} / topics: {:?} / data: {:?}",
+                                                        tx.from, tx.to, log.address, log.topics, log.data
+                                                    ); 
+                                                    info!("[[** PAIR CREATED **]] event: {:?}", event)
+                                                },
+                                                Err(e) => error!("Could not decode PairCreated event: {:?} - hash: {:?}", e, TxHash(log.transaction_hash.unwrap_or_default())),
+                                            }
                                         }
                                     } 
                                 });
