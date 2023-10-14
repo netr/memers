@@ -37,6 +37,9 @@ type RemoveLiquidityWithPermit = (
     FixedBytes,
     FixedBytes,
 );
+type RemoveLiquidity = (Address, Address, U256, U256, U256, Address, U256);
+type RemoveLiquidityETH = (Address, U256, U256, U256, Address, U256);
+
 #[derive(Debug, Clone)]
 pub enum UniswapV2RouterFuncs {
     SwapTokensForEth(SwapTokensForEth),
@@ -47,6 +50,8 @@ pub enum UniswapV2RouterFuncs {
     AddLiquidityETH(AddLiquidityETH),
     RemoveLiquidityEthWithPermit(RemoveLiquidityEthWithPermit),
     RemoveLiquidityWithPermit(RemoveLiquidityWithPermit),
+    RemoveLiquidity(RemoveLiquidity),
+    RemoveLiquidityETH(RemoveLiquidityETH),
 }
 
 impl UniswapV2RouterFuncs {
@@ -99,6 +104,16 @@ impl UniswapV2RouterFuncs {
                     ) {
                         return Some(UniswapV2RouterFuncs::RemoveLiquidityWithPermit(func));
                     }
+                    if let Ok(func) =
+                        decode_function_data::<RemoveLiquidity, _>(function, tx_input, true)
+                    {
+                        return Some(UniswapV2RouterFuncs::RemoveLiquidity(func));
+                    }
+                    if let Ok(func) =
+                        decode_function_data::<RemoveLiquidityETH, _>(function, tx_input, true)
+                    {
+                        return Some(UniswapV2RouterFuncs::RemoveLiquidityETH(func));
+                    }
                 }
 
                 None
@@ -117,7 +132,7 @@ pub fn try_into_uniswap_v2_router(
     input: &Bytes,
 ) -> Option<UniswapV2RouterFuncs> {
     if let Some(router_func) = UniswapV2RouterFuncs::from_input(contract, input) {
-        info!("{:?} - {:?}", router_func, input);
+        info!("{:#?}", router_func);
         return Some(router_func);
     }
     None

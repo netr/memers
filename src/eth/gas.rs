@@ -63,11 +63,11 @@ impl Gas {
     /// async fn main() {
     ///    let provider = Provider::<Http>::connect("https://mainnet.infura.io/v3/").await.unwrap();
     ///    let hash = H256::from_str("0x16423f8d473fd5045bccdf5626a064f45284bd270d7ab7f910ae02d1231c0857").unwrap();
-    ///    let gas = Gas::from_h256(provider, hash).await.unwrap();
+    ///    let gas = Gas::from_tx_hash(provider, hash).await.unwrap();
     ///    println!("{}", gas);
     /// }
     /// ```
-    pub async fn from_h256(provider: Provider<Http>, hash: H256) -> Result<Gas> {
+    pub async fn from_tx_hash(provider: Provider<Http>, hash: H256) -> Result<Gas> {
         let tx = match provider.get_transaction(hash).await {
             Ok(tx) => match tx {
                 Some(tx) => tx,
