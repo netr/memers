@@ -6,8 +6,6 @@ use ethers_core::types::{Address, BlockId, Bytes, H160, U256, U64};
 use ethers_providers::{Http, Middleware, Provider};
 use log::debug;
 
-use crate::constants::UNISWAP_V2_ROUTER_ADDRESS;
-
 pub async fn get_transactions_from_block(
     provider: Provider<Http>,
     block_hash_or_number: BlockId,
@@ -62,10 +60,8 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn is_uniswap_v2_router(&self) -> bool {
-        self.to
-            == Address::from_str(UNISWAP_V2_ROUTER_ADDRESS)
-                .expect("could not parse uniswap v2 router address")
+    pub fn is_to_address(&self, address: &str) -> bool {
+        self.to == Address::from_str(address).expect("could not parse transaction's to address")
     }
 }
 

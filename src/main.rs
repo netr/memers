@@ -1,20 +1,15 @@
 #![allow(dead_code)]
 
-mod abi;
-mod blocknative;
-mod constants;
-mod dex;
-mod utils;
-
-use crate::abi::ABI;
-use crate::constants::Env;
-use crate::utils::setup_logger;
 use anyhow::Result;
+use memers::constants::Env;
+use memers::dex::uniswap;
+use memers::eth::transactions::Transaction;
+use memers::utils::setup_logger;
+use memers::{abi::ABI, constants::UNISWAP_V2_ROUTER_ADDRESS};
 
 use ethers_contract::BaseContract;
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
 use log::{debug, error};
-use memers::eth;
 
 #[tokio::main]
 #[allow(unreachable_code)]
@@ -37,11 +32,14 @@ async fn main() -> Result<()> {
         match http_provider.get_transaction(tx_hash).await {
             Ok(tx) => match tx {
                 Some(tx) => {
-                    let tx = eth::transactions::Transaction::from(tx.to_owned());
-                    if !tx.is_uniswap_v2_router() {
+                    let tx = Transaction::from(tx.to_owned());
+                    if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
                         continue;
                     }
-                    dex::uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input);
+                    match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
+                        Some(_) => {}
+                        None => {}
+                    }
                 }
                 None => error!("Could not get transaction {}", tx_hash),
             },
