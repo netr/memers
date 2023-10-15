@@ -301,9 +301,9 @@ async fn main() -> Result<()> {
                                                         tokio::spawn(async move {
                                                             if is_uniswap_pair(&bytecode_client, log_address, &bc).await {
                                                                 info!(
-                                                                    "[[** LP BURNED **]] tx from: {} - event from: {} / to: {} / value: {}",
+                                                                    "[[** LP BURNED **]] from: {} - lp token: {} / to: {} / value: {}",
                                                                     utils::to_hex_str(tx.from.as_bytes()),
-                                                                    utils::to_hex_str(event.from.as_bytes()),
+                                                                    utils::to_hex_str(log_address.as_bytes()),
                                                                     utils::to_hex_str(event.to.as_bytes()),
                                                                     event.value,
                                                                 );
