@@ -1,10 +1,20 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
+use crossbeam_channel::Sender;
 use ethers_contract::BaseContract;
 use ethers_core::{
     abi::FixedBytes,
-    types::{Address, Bytes, Uint8, U256},
+    types::{Address, Bytes, Uint8, H256, U256},
 };
-use log::info;
+use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
+use log::{debug, error};
+
+use crate::{
+    abi::ABI,
+    eth::transactions::Transaction,
+    utils::{to_hex_str, DistinctStore},
+};
 
 // Type aliases for Uniswap's `swap` return types
 type SwapTokensForEth = (U256, U256, Vec<Address>, Address, U256);
@@ -138,10 +148,116 @@ pub fn try_into_uniswap_v2_router(
     input: &Bytes,
 ) -> Option<UniswapV2RouterFuncs> {
     if let Ok(router_func) = UniswapV2RouterFuncs::from_input(contract, input) {
-        info!("PENDING... {:?}", router_func);
         return Some(router_func);
     }
     None
+}
+
+pub async fn pending_transaction_stream(
+    s: Sender<UniswapV2RouterFuncs>,
+    ws_provider: Arc<Provider<Ws>>,
+    http_provider: Arc<Provider<Http>>,
+) {
+    let abis = ABI::new();
+    let router = BaseContract::from(abis.uniswap_v2_router.clone());
+    let tx_store = DistinctStore::new();
+    let mut stream = ws_provider
+        .subscribe_pending_txs()
+        .await
+        .expect("should work");
+
+    while let Some(tx_hash) = stream.next().await {
+        match http_provider.get_transaction(tx_hash).await {
+            Ok(tx) => match tx {
+                Some(tx) => {
+                    let tx = Transaction::from(tx.to_owned());
+                    if tx_store.contains(tx.hash) {
+                        continue;
+                    }
+                    if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
+                        continue;
+                    }
+                    if let Ok(_) = tx_store.add(tx.hash) {
+                        match try_into_uniswap_v2_router(router.clone(), &tx.input) {
+                            Some(contract) => match s.send(contract) {
+                                Ok(_) => {}
+                                Err(e) => error!(
+                                    "{}",
+                                    PendingTxError::new(
+                                        "send".to_string(),
+                                        "Failed sending transaction to channel".to_string(),
+                                        tx.hash,
+                                        e.to_string()
+                                    )
+                                ),
+                            },
+                            None => {}
+                        }
+                    }
+                }
+                None => debug!(
+                    "{}",
+                    PendingTxError::new(
+                        "get_tx".to_string(),
+                        "Transaction not found".to_string(),
+                        tx_hash,
+                        "".to_string()
+                    )
+                ),
+            },
+            Err(e) => error!(
+                "{}",
+                PendingTxError::new(
+                    "get_tx".to_string(),
+                    "Failed getting transaction from provider".to_string(),
+                    tx_hash,
+                    e.to_string()
+                )
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PendingTxError {
+    target: String,
+    reason: String,
+    hash: H256,
+    error: String,
+}
+
+impl PendingTxError {
+    fn new(target: String, reason: String, hash: H256, error: String) -> Self {
+        Self {
+            target,
+            reason,
+            hash,
+            error,
+        }
+    }
+}
+
+impl std::fmt::Display for PendingTxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.error != "" {
+            write!(
+                f,
+                "[{}] {} - error: {} - hash: {}",
+                self.target,
+                self.reason,
+                self.error,
+                to_hex_str(self.hash.as_bytes())
+            )
+        } else {
+            write!(
+                f,
+                "[{}] {} - hash: {}",
+                self.target,
+                self.reason,
+                to_hex_str(self.hash.as_bytes())
+            )
+        }
+    }
 }
 
 #[cfg(test)]

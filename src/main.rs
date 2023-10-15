@@ -4,7 +4,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use crossbeam_channel::{bounded, select, Sender};
+use ethers_contract::{BaseContract, EthEvent};
 use ethers_core::types::{Address, H160, H256, U256};
+use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
+use log::{debug, error, info};
 use memers::abi::erc20::{OwnershipTransferredFilter, TransferFilter, ERC20};
 use memers::abi::pink_lock::{LockAddedFilter, PinkLock};
 use memers::abi::trust_swap_lp_locker::{DepositFilter, TrustSwapLpLocker};
@@ -17,10 +21,6 @@ use memers::dex::uniswap::{self, UNISWAP_V2_FACTORY_ADDRESS, UNISWAP_V2_ROUTER_A
 use memers::eth::transactions::Transaction;
 use memers::utils::{setup_logger, DistinctStore};
 use memers::{eth, utils};
-
-use ethers_contract::{BaseContract, EthEvent};
-use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error, info};
 #[derive(Debug, Clone, EthEvent)]
 pub struct PairCreated {
     pub token0: Address,
@@ -90,57 +90,40 @@ async fn main() -> Result<()> {
     let uniswap_v2_pair_bytecode =
         std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
 
-    let http_provider = Provider::<Http>::try_from(env.https_url.as_str())
+    let _http_provider = Provider::<Http>::try_from(env.https_url.as_str())
         .expect("could not instantiate HTTP Provider");
-    let ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
+    let _ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
 
-    let abis = ABI::new();
-    let router = BaseContract::from(abis.uniswap_v2_router.clone());
-    let tx_store = DistinctStore::new();
+    // let abis = ABI::new();
+    // let router = BaseContract::from(abis.uniswap_v2_router.clone());
+    // let tx_store = DistinctStore::new();
+
+    let (s, r) = bounded::<uniswap::UniswapV2RouterFuncs>(0);
+
+    let pending_http_provider = Arc::new(
+        Provider::<Http>::try_from(env.https_url.as_str())
+            .expect("could not instantiate HTTP Provider"),
+    );
+    let pending_ws_provider =
+        Arc::new(Provider::<Ws>::connect(env.wss_url.as_str()).await.unwrap());
 
     // run this in a tokio task
     tokio::spawn(async move {
-        let mut stream = ws_provider
-            .subscribe_pending_txs()
-            .await
-            .expect("should work");
-        while let Some(tx_hash) = stream.next().await {
-            match http_provider.get_transaction(tx_hash).await {
-                Ok(tx) => match tx {
-                    Some(tx) => {
-                        let tx = Transaction::from(tx.to_owned());
-                        if tx_store.contains(tx.hash) {
-                            continue;
-                        }
-                        if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
-                            continue;
-                        }
-                        if let Ok(_) = tx_store.add(tx.hash) {
-                            match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
-                                Some(_) => {}
-                                None => {}
-                            }
-                        }
+        uniswap::pending_transaction_stream(s, pending_ws_provider, pending_http_provider).await;
+    });
+
+    tokio::spawn(async move {
+        loop {
+            select! {
+                recv(r) -> msg => match msg {
+                    Ok(msg) => {
+                        info!("PENDING... {:?}", msg);
+                    },
+                    Err(e) => {
+                        error!("Error receiving message: {}", e);
+                        break;
                     }
-                    None => debug!(
-                        "{}",
-                        TxError::new(
-                            "get_tx".to_string(),
-                            "Transaction not found".to_string(),
-                            tx_hash,
-                            "".to_string()
-                        )
-                    ),
-                },
-                Err(e) => error!(
-                    "{}",
-                    TxError::new(
-                        "get_tx".to_string(),
-                        "Failed getting transaction from provider".to_string(),
-                        tx_hash,
-                        e.to_string()
-                    )
-                ),
+                }
             }
         }
     });
@@ -342,7 +325,6 @@ async fn main() -> Result<()> {
                                                 Err(e) => error!("{}", TxError::new("uniswap_swap".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
                                             }
                                         }
-
 
                                         if topic.eq(&_transfer_topic) {
                                             let erc20 = ERC20::new(log.address, client.clone());
