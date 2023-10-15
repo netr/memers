@@ -4,16 +4,19 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use ethers_core::types::{Address, H256, U256, H160};
-use memers::abi::erc20::{ERC20, OwnershipTransferredFilter};
-use memers::abi::uniswap_v2_factory::{UniswapV2Factory, PairCreatedFilter};
+use ethers_core::types::{Address, H160, H256, U256};
+use memers::abi::erc20::{OwnershipTransferredFilter, TransferFilter, ERC20};
+use memers::abi::pink_lock::{LockAddedFilter, PinkLock};
+use memers::abi::trust_swap_lp_locker::{DepositFilter, TrustSwapLpLocker};
+use memers::abi::uncx_lp_locker::{OnDepositFilter, UncxLpLocker};
+use memers::abi::uniswap_v2_factory::{PairCreatedFilter, UniswapV2Factory};
+use memers::abi::ABI;
 use memers::constants::Env;
 use memers::dex::uniswap;
-use memers::eth::constants::{UNISWAP_V2_ROUTER_ADDRESS, UNISWAP_V2_FACTORY_ADDRESS};
-use memers::{eth, utils};
+use memers::eth::constants::{UNISWAP_V2_FACTORY_ADDRESS, UNISWAP_V2_ROUTER_ADDRESS};
 use memers::eth::transactions::Transaction;
 use memers::utils::{setup_logger, DistinctStore};
-use memers::abi::ABI;
+use memers::{eth, utils};
 
 use ethers_contract::{BaseContract, EthEvent};
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
@@ -23,7 +26,7 @@ pub struct PairCreated {
     pub token0: Address,
     pub token1: Address,
     pub pair: Address,
-    pub nonce: U256
+    pub nonce: U256,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +87,8 @@ async fn main() -> Result<()> {
     // return Ok(());
 
     let env = Env::new();
+    let uniswap_v2_pair_bytecode =
+        std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
 
     let http_provider = Provider::<Http>::try_from(env.https_url.as_str())
         .expect("could not instantiate HTTP Provider");
@@ -117,9 +122,25 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    None => warn!("{}", TxError::new("get_tx".to_string(), "Transaction not found".to_string(), tx_hash, "".to_string())),
+                    None => warn!(
+                        "{}",
+                        TxError::new(
+                            "get_tx".to_string(),
+                            "Transaction not found".to_string(),
+                            tx_hash,
+                            "".to_string()
+                        )
+                    ),
                 },
-                Err(e) => error!("{}", TxError::new("get_tx".to_string(), "Failed getting transaction from provider".to_string(), tx_hash, e.to_string())),
+                Err(e) => error!(
+                    "{}",
+                    TxError::new(
+                        "get_tx".to_string(),
+                        "Failed getting transaction from provider".to_string(),
+                        tx_hash,
+                        e.to_string()
+                    )
+                ),
             }
         }
     });
@@ -133,16 +154,26 @@ async fn main() -> Result<()> {
     let block_http_provider = Provider::<Http>::try_from(env.https_url.as_str()).unwrap();
     let block_ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
     let _abis = ABI::new();
-    
+
     let client = Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
-    let factory = UniswapV2Factory::new(H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(), client.clone());
+    let factory = UniswapV2Factory::new(
+        H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(),
+        client.clone(),
+    );
 
     let event = factory.event::<PairCreatedFilter>();
     let _watcher = event.stream().await.unwrap();
 
     let pair_created_hash = H256::from_str(uniswap::PAIR_CREATED_TOPIC).unwrap();
     let _transfer_topic = H256::from_str(memers::eth::constants::TRANSFER_TOPIC).unwrap();
-    let ownership_transferred_topic = H256::from_str(memers::eth::constants::OWNERSHIP_TRANSFERRED_TOPIC).unwrap();
+    let ownership_transferred_topic =
+        H256::from_str(memers::eth::constants::OWNERSHIP_TRANSFERRED_TOPIC).unwrap();
+    let trust_swap_deposit_topic =
+        H256::from_str(memers::eth::constants::TRUST_SWAP_DEPOSIT_TOPIC).unwrap();
+    let uncx_on_deposit_topic =
+        H256::from_str(memers::eth::constants::UNCX_ON_DEPOSIT_TOPIC).unwrap();
+    let pink_lock_added_topic =
+        H256::from_str(memers::eth::constants::PINK_LOCK_ADDED_TOPIC).unwrap();
 
     // run this in a tokio task
     tokio::spawn(async move {
@@ -173,14 +204,12 @@ async fn main() -> Result<()> {
                                             match factory.clone().decode_event::<PairCreatedFilter>("PairCreated", log.topics.clone(), log.data.clone()) {
                                                 Ok(event) => {
                                                     info!(
-                                                        "[[** PAIR CREATED **]] from: {} / to: {} / address: {} / topics: {:?} / data: {:?}",
-                                                        utils::to_hex_str(tx.from.as_bytes()), 
-                                                        utils::to_hex_str(tx.to.as_bytes()), 
-                                                        utils::to_hex_str(log.address.as_bytes()), 
-                                                        log.topics, 
-                                                        log.data,
-                                                    ); 
-                                                    info!("[[** PAIR CREATED **]] event: {:?}", event)
+                                                        "[[** PAIR CREATED **]] from: {} / token_0: {} / token_1: {} / pair: {}",
+                                                        utils::to_hex_str(tx.from.as_bytes()),
+                                                        utils::to_hex_str(event.token_0.as_bytes()),
+                                                        utils::to_hex_str(event.token_1.as_bytes()),
+                                                        utils::to_hex_str(event.pair.as_bytes()),
+                                                    );
                                                 },
                                                 Err(e) => error!("{}", TxError::new("pair_created".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
                                             }
@@ -192,23 +221,120 @@ async fn main() -> Result<()> {
                                                 Ok(event) => {
                                                     if event.new_owner.is_zero() {
                                                         info!(
-                                                            "[[** OWNERSHIP RENOUNCED **]] from: {} / to: {} / address: {} / topics: {:?} / data: {:?}",
-                                                            utils::to_hex_str(tx.from.as_bytes()), 
-                                                            utils::to_hex_str(tx.to.as_bytes()), 
-                                                            utils::to_hex_str(log.address.as_bytes()), 
-                                                            log.topics, 
-                                                            log.data,
-                                                        ); 
+                                                            "[[** OWNERSHIP RENOUNCED **]] from: {} / to: {} / prev_owner: {} / new_owner: {}",
+                                                            utils::to_hex_str(tx.from.as_bytes()),
+                                                            utils::to_hex_str(tx.to.as_bytes()),
+                                                            utils::to_hex_str(event.previous_owner.as_bytes()),
+                                                            utils::to_hex_str(event.new_owner.as_bytes()),
+                                                        );
                                                     }
                                                 },
                                                 Err(e) => error!("{}", TxError::new("ownership_renounced".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
                                             }
                                         }
-                                    } 
+
+                                        if topic.eq(&trust_swap_deposit_topic) {
+                                            let trust_swap = TrustSwapLpLocker::new(log.address, client.clone());
+                                            match trust_swap.decode_event::<DepositFilter>("Deposit", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[** TRUST SWAP LP LOCK **]] from: {} / to: {} / token: {}, withdrawal to: {} / amount: {} / unlock time: {}",
+                                                        utils::to_hex_str(tx.from.as_bytes()),
+                                                        utils::to_hex_str(tx.to.as_bytes()),
+                                                        utils::to_hex_str(event.token_address.as_bytes()),
+                                                        utils::to_hex_str(event.withdrawal_address.as_bytes()),
+                                                        event.amount,
+                                                        event.unlock_time,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("trust_swap_deposit".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&uncx_on_deposit_topic) {
+                                            let uncx = UncxLpLocker::new(log.address, client.clone());
+                                            match uncx.decode_event::<OnDepositFilter>("OnDeposit", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[** UNCX LP LOCK **]] from: {} / to: {} / token: {} / user: {} / amount: {} / lock date: {} / unlock date: {}",
+                                                        utils::to_hex_str(tx.from.as_bytes()),
+                                                        utils::to_hex_str(tx.to.as_bytes()),
+                                                        utils::to_hex_str(event.lp_token.as_bytes()),
+                                                        utils::to_hex_str(event.user.as_bytes()),
+                                                        event.amount,
+                                                        event.lock_date,
+                                                        event.unlock_date,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("uncx_on_deposit".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&pink_lock_added_topic) {
+                                            let uncx = PinkLock::new(log.address, client.clone());
+                                            match uncx.decode_event::<LockAddedFilter>("LockAdded", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[** PINK LP LOCK **]] from: {} / to: {} / token: {} / owner: {} / amount: {} / unlock date: {}",
+                                                        utils::to_hex_str(tx.from.as_bytes()),
+                                                        utils::to_hex_str(tx.to.as_bytes()),
+                                                        utils::to_hex_str(event.token.as_bytes()),
+                                                        utils::to_hex_str(event.owner.as_bytes()),
+                                                        event.amount,
+                                                        event.unlock_date,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("pink_lock_added".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+
+                                        if topic.eq(&_transfer_topic) {
+                                            let erc20 = ERC20::new(log.address, client.clone());
+                                            match erc20.decode_event::<TransferFilter>("Transfer", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    let dead_address = H160::from_str(memers::eth::constants::DEAD_ADDRESS).unwrap();
+                                                    if event.to.eq(&dead_address) && !event.from.is_zero() {
+                                                        let log_address = log.address.clone();
+                                                        let bytecode_client = Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
+                                                        let bc = uniswap_v2_pair_bytecode.clone();
+                                                        tokio::spawn(async move {
+                                                            if is_uniswap_pair(&bytecode_client, log_address, &bc).await {
+                                                                info!(
+                                                                    "[[** LP BURNED **]] tx from: {} - event from: {} / to: {} / value: {}",
+                                                                    utils::to_hex_str(tx.from.as_bytes()),
+                                                                    utils::to_hex_str(event.from.as_bytes()),
+                                                                    utils::to_hex_str(event.to.as_bytes()),
+                                                                    event.value,
+                                                                );
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                Err(_) => {},
+                                            }
+                                        }
+                                    }
                                 });
                             }
-                            Ok(None) => error!("{:?}", TxError::new("block_with_txs".to_string(), "No transaction receipt found".to_string(), tx.hash, "".to_string())),
-                            Err(e) => error!("{}", TxError::new("block_with_txs".to_string(), "Failed to get transaction receipt from provider".to_string(), tx.hash, e.to_string())),
+                            Ok(None) => error!(
+                                "{:?}",
+                                TxError::new(
+                                    "block_with_txs".to_string(),
+                                    "No transaction receipt found".to_string(),
+                                    tx.hash,
+                                    "".to_string()
+                                )
+                            ),
+                            Err(e) => error!(
+                                "{}",
+                                TxError::new(
+                                    "block_with_txs".to_string(),
+                                    "Failed to get transaction receipt from provider".to_string(),
+                                    tx.hash,
+                                    e.to_string()
+                                )
+                            ),
                         };
                     }
                 }
@@ -221,4 +347,26 @@ async fn main() -> Result<()> {
     let _ = tokio::signal::ctrl_c().await;
 
     Ok(())
+}
+
+async fn is_uniswap_pair(provider: &Provider<Http>, address: Address, bytecode: &str) -> bool {
+    match provider.get_code(address, None).await {
+        Ok(code) => code.to_string() == bytecode,
+        Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::providers::{Http, Provider};
+
+    #[tokio::test]
+    async fn it_should_get_byte_code() {
+        let uniswap_v2_pair_bytecode =
+            std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
+        let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+        let address = H160::from_str("0x8bfc25ae2ac1ee299f541fc300d8737ef419066d").unwrap();
+        assert!(is_uniswap_pair(&provider, address, &uniswap_v2_pair_bytecode).await);
+    }
 }
