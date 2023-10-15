@@ -171,10 +171,7 @@ pub async fn pending_transaction_stream(
             Ok(tx) => match tx {
                 Some(tx) => {
                     let tx = Transaction::from(tx.to_owned());
-                    if tx_store.contains(tx.hash) {
-                        continue;
-                    }
-                    if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
+                    if !tx.is_to_uniswap_v2_router() || tx_store.contains(tx.hash) {
                         continue;
                     }
                     if let Ok(_) = tx_store.add(tx.hash) {

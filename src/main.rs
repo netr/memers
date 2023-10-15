@@ -94,12 +94,7 @@ async fn main() -> Result<()> {
         .expect("could not instantiate HTTP Provider");
     let _ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
 
-    // let abis = ABI::new();
-    // let router = BaseContract::from(abis.uniswap_v2_router.clone());
-    // let tx_store = DistinctStore::new();
-
     let (s, r) = bounded::<uniswap::UniswapV2RouterFuncs>(0);
-
     let pending_http_provider = Arc::new(
         Provider::<Http>::try_from(env.https_url.as_str())
             .expect("could not instantiate HTTP Provider"),
