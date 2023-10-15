@@ -43,6 +43,7 @@ pub const PAIR_CREATED_TOPIC: &str =
     "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9";
 pub const MINT_TOPIC: &str = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f";
 pub const BURN_TOPIC: &str = "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
+pub const SWAP_TOPIC: &str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 
 #[derive(Debug, Clone)]
 pub enum UniswapV2RouterFuncs {
@@ -134,7 +135,7 @@ pub fn try_into_uniswap_v2_router(
     input: &Bytes,
 ) -> Option<UniswapV2RouterFuncs> {
     if let Ok(router_func) = UniswapV2RouterFuncs::from_input(contract, input) {
-        info!("{:?}", router_func);
+        info!("PENDING... {:?}", router_func);
         return Some(router_func);
     }
     None

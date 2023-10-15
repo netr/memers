@@ -10,6 +10,7 @@ use memers::abi::pink_lock::{LockAddedFilter, PinkLock};
 use memers::abi::trust_swap_lp_locker::{DepositFilter, TrustSwapLpLocker};
 use memers::abi::uncx_lp_locker::{OnDepositFilter, UncxLpLocker};
 use memers::abi::uniswap_v2_factory::{PairCreatedFilter, UniswapV2Factory};
+use memers::abi::uniswap_v2_pair::{BurnFilter, MintFilter, SwapFilter, UniswapV2Pair};
 use memers::abi::ABI;
 use memers::constants::Env;
 use memers::dex::uniswap;
@@ -174,6 +175,9 @@ async fn main() -> Result<()> {
         H256::from_str(memers::eth::constants::UNCX_ON_DEPOSIT_TOPIC).unwrap();
     let pink_lock_added_topic =
         H256::from_str(memers::eth::constants::PINK_LOCK_ADDED_TOPIC).unwrap();
+    let uniswap_mint_topic = H256::from_str(uniswap::MINT_TOPIC).unwrap();
+    let uniswap_burn_topic = H256::from_str(uniswap::BURN_TOPIC).unwrap();
+    let uniswap_swap_topic = H256::from_str(uniswap::SWAP_TOPIC).unwrap();
 
     // run this in a tokio task
     tokio::spawn(async move {
@@ -221,7 +225,7 @@ async fn main() -> Result<()> {
                                                 Ok(event) => {
                                                     if event.new_owner.is_zero() {
                                                         info!(
-                                                            "[[** OWNERSHIP RENOUNCED **]] from: {} / to: {} / prev_owner: {} / new_owner: {}",
+                                                            "[[*v OWNERSHIP RENOUNCED v*]] from: {} / to: {} / prev_owner: {} / new_owner: {}",
                                                             utils::to_hex_str(tx.from.as_bytes()),
                                                             utils::to_hex_str(tx.to.as_bytes()),
                                                             utils::to_hex_str(event.previous_owner.as_bytes()),
@@ -238,7 +242,7 @@ async fn main() -> Result<()> {
                                             match trust_swap.decode_event::<DepositFilter>("Deposit", log.topics.clone(),log.data.clone()) {
                                                 Ok(event) => {
                                                     info!(
-                                                        "[[** TRUST SWAP LP LOCK **]] from: {} / to: {} / token: {}, withdrawal to: {} / amount: {} / unlock time: {}",
+                                                        "[[*# TRUST SWAP LP LOCK #*]] from: {} / to: {} / token: {}, withdrawal to: {} / amount: {} / unlock time: {}",
                                                         utils::to_hex_str(tx.from.as_bytes()),
                                                         utils::to_hex_str(tx.to.as_bytes()),
                                                         utils::to_hex_str(event.token_address.as_bytes()),
@@ -256,7 +260,7 @@ async fn main() -> Result<()> {
                                             match uncx.decode_event::<OnDepositFilter>("OnDeposit", log.topics.clone(),log.data.clone()) {
                                                 Ok(event) => {
                                                     info!(
-                                                        "[[** UNCX LP LOCK **]] from: {} / to: {} / token: {} / user: {} / amount: {} / lock date: {} / unlock date: {}",
+                                                        "[[*# UNCX LP LOCK #*]] from: {} / to: {} / token: {} / user: {} / amount: {} / lock date: {} / unlock date: {}",
                                                         utils::to_hex_str(tx.from.as_bytes()),
                                                         utils::to_hex_str(tx.to.as_bytes()),
                                                         utils::to_hex_str(event.lp_token.as_bytes()),
@@ -275,7 +279,7 @@ async fn main() -> Result<()> {
                                             match uncx.decode_event::<LockAddedFilter>("LockAdded", log.topics.clone(),log.data.clone()) {
                                                 Ok(event) => {
                                                     info!(
-                                                        "[[** PINK LP LOCK **]] from: {} / to: {} / token: {} / owner: {} / amount: {} / unlock date: {}",
+                                                        "[[*# PINK LP LOCK #*]] from: {} / to: {} / token: {} / owner: {} / amount: {} / unlock date: {}",
                                                         utils::to_hex_str(tx.from.as_bytes()),
                                                         utils::to_hex_str(tx.to.as_bytes()),
                                                         utils::to_hex_str(event.token.as_bytes()),
@@ -285,6 +289,58 @@ async fn main() -> Result<()> {
                                                     );
                                                 },
                                                 Err(e) => error!("{}", TxError::new("pink_lock_added".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&uniswap_mint_topic) {
+                                            let pair = UniswapV2Pair::new(log.address, client.clone());
+                                            match pair.decode_event::<MintFilter>("Mint", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[!* ADD LIQUIDITY *!]] sender: {} / pair: {} / amount_0: {} / amount_1: {}",
+                                                        utils::to_hex_str(event.sender.as_bytes()),
+                                                        utils::to_hex_str(log.address.as_bytes()),
+                                                        event.amount_0,
+                                                        event.amount_1,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("uniswap_mint".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&uniswap_burn_topic) {
+                                            let pair = UniswapV2Pair::new(log.address, client.clone());
+                                            match pair.decode_event::<BurnFilter>("Burn", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    info!(
+                                                        "[[!* REMOVE LIQUIDITY *!]] sender: {} / pair: {} / to: {} / amount_0: {} / amount_1: {}",
+                                                        utils::to_hex_str(event.sender.as_bytes()),
+                                                        utils::to_hex_str(log.address.as_bytes()),
+                                                        utils::to_hex_str(event.to.as_bytes()),
+                                                        event.amount_0,
+                                                        event.amount_1,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("uniswap_burn".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&uniswap_swap_topic) {
+                                            let pair = UniswapV2Pair::new(log.address, client.clone());
+                                            match pair.decode_event::<SwapFilter>("Swap", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    debug!(
+                                                        "[*- SWAP -*] sender: {} / to: {} / pair: {} / amount_0_in: {} / amount_1_in: {}, amount_0_out: {}, amount_1_out: {}",
+                                                        utils::to_hex_str(event.sender.as_bytes()),
+                                                        utils::to_hex_str(event.to.as_bytes()),
+                                                        utils::to_hex_str(log.address.as_bytes()),
+                                                        event.amount_0_in,
+                                                        event.amount_1_in,
+                                                        event.amount_0_out,
+                                                        event.amount_1_out,
+                                                    );
+                                                },
+                                                Err(e) => error!("{}", TxError::new("uniswap_swap".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
                                             }
                                         }
 
@@ -301,7 +357,7 @@ async fn main() -> Result<()> {
                                                         tokio::spawn(async move {
                                                             if is_uniswap_pair(&bytecode_client, log_address, &bc).await {
                                                                 info!(
-                                                                    "[[** LP BURNED **]] from: {} - lp token: {} / to: {} / value: {}",
+                                                                    "[[*~ LP BURNED ~*]] from: {} - lp token: {} / to: {} / value: {}",
                                                                     utils::to_hex_str(tx.from.as_bytes()),
                                                                     utils::to_hex_str(log_address.as_bytes()),
                                                                     utils::to_hex_str(event.to.as_bytes()),
@@ -362,6 +418,7 @@ mod tests {
     use ethers::providers::{Http, Provider};
 
     #[tokio::test]
+    #[ignore = "requires local node"]
     async fn it_should_get_byte_code() {
         let uniswap_v2_pair_bytecode =
             std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
