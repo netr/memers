@@ -15,11 +15,14 @@ pub struct ABI {
     pub uniswap_v2_factory: Abi,
 }
 
+// TODO: Remove this implementation and use the one from ethers-rs
 impl ABI {
     pub fn new() -> Self {
-        let erc20_json = fs::read_to_string("src/abi/ERC20.json").unwrap();
-        let uniswap_v2_router_json = fs::read_to_string("src/abi/UniswapV2Router.json").unwrap();
-        let uniswap_v2_factory_json = fs::read_to_string("src/abi/UniswapV2Factory.json").unwrap();
+        let erc20_json = fs::read_to_string("src/abi/json/ERC20.json").unwrap();
+        let uniswap_v2_router_json =
+            fs::read_to_string("src/abi/json/UniswapV2Router.json").unwrap();
+        let uniswap_v2_factory_json =
+            fs::read_to_string("src/abi/json/UniswapV2Factory.json").unwrap();
         Self {
             erc20: serde_json::from_str(&erc20_json).unwrap(),
             uniswap_v2_router: serde_json::from_str(&uniswap_v2_router_json).unwrap(),
