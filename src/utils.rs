@@ -1,9 +1,11 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
+use ethers_core::utils::hex;
 use fern::colors::{Color, ColoredLevelConfig};
 use log::LevelFilter;
 use std::{
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -58,6 +60,10 @@ pub fn setup_logger(level_filter: LevelFilter) -> Result<()> {
     Ok(())
 }
 
+pub fn to_hex_str(bytes: &[u8]) -> String {
+    format!("0x{}", hex::encode(bytes))
+}
+
 pub fn convert_utc_to_str(timestamp: u64) -> String {
     let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp);
     let datetime = DateTime::<Utc>::from(timestamp);
@@ -90,8 +96,46 @@ fn split_file_name(file_name: &str) -> String {
     result.to_str().unwrap_or("").to_string()
 }
 
+pub struct DistinctStore<T>
+where
+    T: PartialEq + Copy,
+{
+    seen: Arc<Mutex<Vec<T>>>,
+}
+
+impl<T: PartialEq + Copy> DistinctStore<T> {
+    pub fn new() -> Self {
+        Self {
+            seen: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn add(&self, item: T) -> Result<()> {
+        if self.contains(item) {
+            return Err(anyhow!("item already exists in store"));
+        }
+        let mut seen = self.seen.lock().unwrap();
+        seen.push(item);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        let seen = self.seen.lock().unwrap();
+        seen.len()
+    }
+
+    pub fn contains(&self, item: T) -> bool {
+        let seen = self.seen.lock().unwrap();
+        seen.contains(&item)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use ethers_core::types::H256;
+
     use super::*;
 
     #[test]
@@ -136,5 +180,38 @@ mod tests {
         let expected = "src/user/main.rs";
         let actual = split_file_name(file_name);
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn it_should_convert_h256_to_hex_string() {
+        let pair_created_hash =
+            H256::from_str("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+                .unwrap();
+        assert_eq!(
+            to_hex_str(pair_created_hash.as_bytes()),
+            "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
+        );
+    }
+
+    #[test]
+    fn it_should_add_hash_to_transaction_store() {
+        let store = DistinctStore::new();
+        let hash =
+            H256::from_str("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+                .unwrap();
+        store.add(hash).ok();
+        assert!(store.contains(hash));
+    }
+
+    #[test]
+    fn it_should_not_add_dupes_to_transaction_store() {
+        let store = DistinctStore::new();
+        let hash =
+            H256::from_str("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+                .unwrap();
+        store.add(hash).ok();
+        store.add(hash).ok();
+        assert!(store.contains(hash));
+        assert_eq!(store.len(), 1);
     }
 }

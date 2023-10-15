@@ -5,17 +5,19 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ethers_core::types::{Address, H256, U256, H160};
+use memers::abi::erc20::{ERC20, OwnershipTransferredFilter};
 use memers::abi::uniswap_v2_factory::{UniswapV2Factory, PairCreatedFilter};
-use memers::constants::{Env, UNISWAP_V2_FACTORY_ADDRESS};
+use memers::constants::Env;
 use memers::dex::uniswap;
-use memers::eth;
+use memers::eth::constants::{UNISWAP_V2_ROUTER_ADDRESS, UNISWAP_V2_FACTORY_ADDRESS};
+use memers::{eth, utils};
 use memers::eth::transactions::Transaction;
-use memers::utils::setup_logger;
-use memers::{abi::ABI, constants::UNISWAP_V2_ROUTER_ADDRESS};
+use memers::utils::{setup_logger, DistinctStore};
+use memers::abi::ABI;
 
 use ethers_contract::{BaseContract, EthEvent};
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 #[derive(Debug, Clone, EthEvent)]
 pub struct PairCreated {
     pub token0: Address,
@@ -25,13 +27,51 @@ pub struct PairCreated {
 }
 
 #[derive(Debug, Clone)]
-struct TxHash(H256);
+struct TxError {
+    target: String,
+    reason: String,
+    hash: H256,
+    error: String,
+}
 
+impl TxError {
+    fn new(target: String, reason: String, hash: H256, error: String) -> Self {
+        Self {
+            target,
+            reason,
+            hash,
+            error,
+        }
+    }
+}
+
+impl std::fmt::Display for TxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.error != "" {
+            write!(
+                f,
+                "[{}] {} - error: {} - hash: {}",
+                self.target,
+                self.reason,
+                self.error,
+                utils::to_hex_str(self.hash.as_bytes())
+            )
+        } else {
+            write!(
+                f,
+                "[{}] {} - hash: {}",
+                self.target,
+                self.reason,
+                utils::to_hex_str(self.hash.as_bytes())
+            )
+        }
+    }
+}
 
 #[tokio::main]
 #[allow(unreachable_code)]
 async fn main() -> Result<()> {
-    setup_logger(log::LevelFilter::Debug)?;
+    setup_logger(log::LevelFilter::Info)?;
     dotenvy::dotenv().ok();
     debug!("Starting up memers");
 
@@ -51,6 +91,7 @@ async fn main() -> Result<()> {
 
     let abis = ABI::new();
     let router = BaseContract::from(abis.uniswap_v2_router.clone());
+    let tx_store = DistinctStore::new();
 
     // run this in a tokio task
     tokio::spawn(async move {
@@ -63,17 +104,22 @@ async fn main() -> Result<()> {
                 Ok(tx) => match tx {
                     Some(tx) => {
                         let tx = Transaction::from(tx.to_owned());
+                        if tx_store.contains(tx.hash) {
+                            continue;
+                        }
                         if !tx.is_to_address(UNISWAP_V2_ROUTER_ADDRESS) {
                             continue;
                         }
-                        match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
-                            Some(_) => {}
-                            None => {}
+                        if let Ok(_) = tx_store.add(tx.hash) {
+                            match uniswap::try_into_uniswap_v2_router(router.clone(), &tx.input) {
+                                Some(_) => {}
+                                None => {}
+                            }
                         }
                     }
-                    None => error!("Could not get transaction {:?}", TxHash(tx_hash)),
+                    None => warn!("{}", TxError::new("get_tx".to_string(), "Transaction not found".to_string(), tx_hash, "".to_string())),
                 },
-                Err(e) => error!("[get_tx] error: {:?} - hash: {}", e, tx_hash),
+                Err(e) => error!("{}", TxError::new("get_tx".to_string(), "Failed getting transaction from provider".to_string(), tx_hash, e.to_string())),
             }
         }
     });
@@ -89,11 +135,14 @@ async fn main() -> Result<()> {
     let _abis = ABI::new();
     
     let client = Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
-    let factory = UniswapV2Factory::new(H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(), client);
+    let factory = UniswapV2Factory::new(H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(), client.clone());
+
     let event = factory.event::<PairCreatedFilter>();
     let _watcher = event.stream().await.unwrap();
 
     let pair_created_hash = H256::from_str(uniswap::PAIR_CREATED_TOPIC).unwrap();
+    let _transfer_topic = H256::from_str(memers::eth::constants::TRANSFER_TOPIC).unwrap();
+    let ownership_transferred_topic = H256::from_str(memers::eth::constants::OWNERSHIP_TRANSFERRED_TOPIC).unwrap();
 
     // run this in a tokio task
     tokio::spawn(async move {
@@ -121,22 +170,45 @@ async fn main() -> Result<()> {
                                     if log.topics.len() > 0 {
                                         let topic = log.topics[0];
                                         if topic.eq(&pair_created_hash) {
-                                            match factory.clone().decode_event::<PairCreatedFilter>("PairCreated", log.topics.clone(), tx.input.clone()) {
+                                            match factory.clone().decode_event::<PairCreatedFilter>("PairCreated", log.topics.clone(), log.data.clone()) {
                                                 Ok(event) => {
                                                     info!(
-                                                        "[[** PAIR CREATED **]] from: {} / to: {} / address: {:?} / topics: {:?} / data: {:?}",
-                                                        tx.from, tx.to, log.address, log.topics, log.data
+                                                        "[[** PAIR CREATED **]] from: {} / to: {} / address: {} / topics: {:?} / data: {:?}",
+                                                        utils::to_hex_str(tx.from.as_bytes()), 
+                                                        utils::to_hex_str(tx.to.as_bytes()), 
+                                                        utils::to_hex_str(log.address.as_bytes()), 
+                                                        log.topics, 
+                                                        log.data,
                                                     ); 
                                                     info!("[[** PAIR CREATED **]] event: {:?}", event)
                                                 },
-                                                Err(e) => error!("Could not decode PairCreated event: {:?} - hash: {:?}", e, TxHash(log.transaction_hash.unwrap_or_default())),
+                                                Err(e) => error!("{}", TxError::new("pair_created".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
+                                            }
+                                        }
+
+                                        if topic.eq(&ownership_transferred_topic) {
+                                            let erc20 = ERC20::new(log.address, client.clone());
+                                            match erc20.decode_event::<OwnershipTransferredFilter>("OwnershipTransferred", log.topics.clone(),log.data.clone()) {
+                                                Ok(event) => {
+                                                    if event.new_owner.is_zero() {
+                                                        info!(
+                                                            "[[** OWNERSHIP RENOUNCED **]] from: {} / to: {} / address: {} / topics: {:?} / data: {:?}",
+                                                            utils::to_hex_str(tx.from.as_bytes()), 
+                                                            utils::to_hex_str(tx.to.as_bytes()), 
+                                                            utils::to_hex_str(log.address.as_bytes()), 
+                                                            log.topics, 
+                                                            log.data,
+                                                        ); 
+                                                    }
+                                                },
+                                                Err(e) => error!("{}", TxError::new("ownership_renounced".to_string(), "Decode event".to_string(), log.transaction_hash.unwrap_or_default(), e.to_string())),
                                             }
                                         }
                                     } 
                                 });
                             }
-                            Ok(None) => error!("Could not get receipt for tx {}", tx.hash),
-                            Err(e) => error!("Could not get receipt for tx {}: {}", tx.hash, e),
+                            Ok(None) => error!("{:?}", TxError::new("block_with_txs".to_string(), "No transaction receipt found".to_string(), tx.hash, "".to_string())),
+                            Err(e) => error!("{}", TxError::new("block_with_txs".to_string(), "Failed to get transaction receipt from provider".to_string(), tx.hash, e.to_string())),
                         };
                     }
                 }

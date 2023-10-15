@@ -41,6 +41,8 @@ type RemoveLiquidityETH = (Address, U256, U256, U256, Address, U256);
 
 pub const PAIR_CREATED_TOPIC: &str =
     "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9";
+pub const MINT_TOPIC: &str = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f";
+pub const BURN_TOPIC: &str = "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
 
 #[derive(Debug, Clone)]
 pub enum UniswapV2RouterFuncs {

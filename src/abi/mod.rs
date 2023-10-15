@@ -4,6 +4,7 @@ use std::fs;
 pub mod uniswap_v2_factory;
 pub mod uniswap_v2_pair;
 pub mod uniswap_v2_router;
+pub mod erc20;
 
 pub struct ABI {
     pub erc20: Abi,
