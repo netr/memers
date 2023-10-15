@@ -1,18 +1,26 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::Sender;
 use ethers_contract::BaseContract;
 use ethers_core::{
     abi::FixedBytes,
-    types::{Address, Bytes, Uint8, H256, U256},
+    types::{Address, Bytes, Log, Uint8, H160, H256, U256},
 };
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::{
-    abi::ABI,
-    eth::transactions::Transaction,
+    abi::{
+        erc20::{OwnershipTransferredFilter, TransferFilter, ERC20},
+        pink_lock::{LockAddedFilter, PinkLock},
+        trust_swap_lp_locker::{DepositFilter, TrustSwapLpLocker},
+        uncx_lp_locker::{OnDepositFilter, UncxLpLocker},
+        uniswap_v2_factory::{PairCreatedFilter, UniswapV2Factory},
+        uniswap_v2_pair::{BurnFilter, MintFilter, SwapFilter, UniswapV2Pair},
+        ABI,
+    },
+    eth::{self, transactions::Transaction},
     utils::{to_hex_str, DistinctStore},
 };
 
@@ -153,6 +161,218 @@ pub fn try_into_uniswap_v2_router(
     None
 }
 
+pub async fn transactions_from_block_stream(
+    s: Sender<UniswapTopic>,
+    ws_provider: Arc<Provider<Ws>>,
+    http_provider: Arc<Provider<Http>>,
+) {
+    let mut stream = ws_provider.subscribe_blocks().await.expect("should work");
+
+    while let Some(block) = stream.next().await {
+        debug!("New block: {}", block.number.unwrap());
+        match eth::transactions::get_transactions_from_block(
+            http_provider.clone(),
+            ethers_core::types::BlockId::Hash(block.hash.unwrap()),
+        )
+        .await
+        {
+            Ok(block_with_txs) => {
+                for tx in block_with_txs.transactions {
+                    match http_provider.clone().get_transaction_receipt(tx.hash).await {
+                        Ok(Some(receipt)) => {
+                            receipt.logs.iter().for_each(|log| {
+                                if let Some(topic) = try_uniswap_topic_from_log(
+                                    tx.clone(),
+                                    log,
+                                    http_provider.clone(),
+                                ) {
+                                    s.send(topic).unwrap();
+                                }
+                            });
+                        }
+                        Ok(None) => error!(
+                            "{:?}",
+                            TransactionError::new(
+                                "block_with_txs".to_string(),
+                                "No transaction receipt found".to_string(),
+                                tx.hash,
+                                "".to_string()
+                            )
+                        ),
+                        Err(e) => error!(
+                            "{}",
+                            TransactionError::new(
+                                "block_with_txs".to_string(),
+                                "Failed to get transaction receipt from provider".to_string(),
+                                tx.hash,
+                                e.to_string()
+                            )
+                        ),
+                    }
+                }
+            }
+            Err(e) => error!("Could not get transactions from block: {}", e),
+        }
+    }
+}
+
+fn get_topic_from_log(log: &ethers_core::types::Log) -> Option<H256> {
+    if log.topics.len() > 0 {
+        let topic = log.topics[0];
+        return Some(topic);
+    }
+    None
+}
+
+#[derive(Debug, Clone)]
+pub enum UniswapTopic {
+    PairCreated(Transaction, Log, PairCreatedFilter),
+    Transfer(Transaction, Log, TransferFilter),
+    OwnershipTransferred(Transaction, Log, OwnershipTransferredFilter),
+    TrustSwapDeposit(Transaction, Log, DepositFilter),
+    UncxOnDeposit(Transaction, Log, OnDepositFilter),
+    PinkLockAdded(Transaction, Log, LockAddedFilter),
+    Mint(Transaction, Log, MintFilter),
+    Burn(Transaction, Log, BurnFilter),
+    Swap(Transaction, Log, SwapFilter),
+}
+
+fn try_uniswap_topic_from_log(
+    tx: Transaction,
+    log: &Log,
+    provider: Arc<Provider<Http>>,
+) -> Option<UniswapTopic> {
+    if let Some(topic) = get_topic_from_log(log) {
+        return match to_hex_str(topic.as_bytes()).as_str() {
+            PAIR_CREATED_TOPIC => {
+                let factory = UniswapV2Factory::new(
+                    H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(),
+                    provider,
+                );
+                match factory.clone().decode_event::<PairCreatedFilter>(
+                    "PairCreated",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::PairCreated(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event,
+                    )),
+                    Err(_) => None,
+                }
+            }
+            eth::constants::TRANSFER_TOPIC => {
+                let erc20 = ERC20::new(log.address, provider);
+                match erc20.clone().decode_event::<TransferFilter>(
+                    "Transfer",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::Transfer(tx.to_owned(), log.to_owned(), event)),
+                    Err(_) => None,
+                }
+            }
+            eth::constants::OWNERSHIP_TRANSFERRED_TOPIC => {
+                let erc20 = ERC20::new(log.address, provider);
+                match erc20.clone().decode_event::<OwnershipTransferredFilter>(
+                    "OwnershipTransferred",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::OwnershipTransferred(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event,
+                    )),
+                    Err(_) => None,
+                }
+            }
+            eth::constants::TRUST_SWAP_DEPOSIT_TOPIC => {
+                let trust_swap = TrustSwapLpLocker::new(log.address, provider);
+                match trust_swap.clone().decode_event::<DepositFilter>(
+                    "Deposit",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::TrustSwapDeposit(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event,
+                    )),
+                    Err(_) => None,
+                }
+            }
+            eth::constants::UNCX_ON_DEPOSIT_TOPIC => {
+                let uncx = UncxLpLocker::new(log.address, provider);
+                match uncx.clone().decode_event::<OnDepositFilter>(
+                    "OnDeposit",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::UncxOnDeposit(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event,
+                    )),
+                    Err(_) => None,
+                }
+            }
+            eth::constants::PINK_LOCK_ADDED_TOPIC => {
+                let pink = PinkLock::new(log.address, provider);
+                match pink.clone().decode_event::<LockAddedFilter>(
+                    "LockAdded",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::PinkLockAdded(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event,
+                    )),
+                    Err(_) => None,
+                }
+            }
+            MINT_TOPIC => {
+                let pair = UniswapV2Pair::new(log.address, provider);
+                match pair.clone().decode_event::<MintFilter>(
+                    "Mint",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::Mint(tx.to_owned(), log.to_owned(), event)),
+                    Err(_) => None,
+                }
+            }
+            BURN_TOPIC => {
+                let pair = UniswapV2Pair::new(log.address, provider);
+                match pair.clone().decode_event::<BurnFilter>(
+                    "Burn",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::Burn(tx.to_owned(), log.to_owned(), event)),
+                    Err(_) => None,
+                }
+            }
+            SWAP_TOPIC => {
+                let pair = UniswapV2Pair::new(log.address, provider);
+                match pair.clone().decode_event::<SwapFilter>(
+                    "Swap",
+                    log.topics.clone(),
+                    log.data.clone(),
+                ) {
+                    Ok(event) => Some(UniswapTopic::Swap(tx.to_owned(), log.to_owned(), event)),
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+    }
+
+    None
+}
+
 pub async fn pending_transaction_stream(
     s: Sender<UniswapV2RouterFuncs>,
     ws_provider: Arc<Provider<Ws>>,
@@ -180,7 +400,7 @@ pub async fn pending_transaction_stream(
                                 Ok(_) => {}
                                 Err(e) => error!(
                                     "{}",
-                                    PendingTxError::new(
+                                    TransactionError::new(
                                         "send".to_string(),
                                         "Failed sending transaction to channel".to_string(),
                                         tx.hash,
@@ -194,7 +414,7 @@ pub async fn pending_transaction_stream(
                 }
                 None => debug!(
                     "{}",
-                    PendingTxError::new(
+                    TransactionError::new(
                         "get_tx".to_string(),
                         "Transaction not found".to_string(),
                         tx_hash,
@@ -204,7 +424,7 @@ pub async fn pending_transaction_stream(
             },
             Err(e) => error!(
                 "{}",
-                PendingTxError::new(
+                TransactionError::new(
                     "get_tx".to_string(),
                     "Failed getting transaction from provider".to_string(),
                     tx_hash,
@@ -216,14 +436,14 @@ pub async fn pending_transaction_stream(
 }
 
 #[derive(Debug, Clone)]
-struct PendingTxError {
+struct TransactionError {
     target: String,
     reason: String,
     hash: H256,
     error: String,
 }
 
-impl PendingTxError {
+impl TransactionError {
     fn new(target: String, reason: String, hash: H256, error: String) -> Self {
         Self {
             target,
@@ -234,7 +454,7 @@ impl PendingTxError {
     }
 }
 
-impl std::fmt::Display for PendingTxError {
+impl std::fmt::Display for TransactionError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if self.error != "" {
             write!(

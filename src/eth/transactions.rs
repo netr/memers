@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use ethers::prelude::H256;
@@ -8,7 +8,7 @@ use ethers_providers::{Http, Middleware, Provider};
 use crate::dex::uniswap::UNISWAP_V2_ROUTER_ADDRESS;
 
 pub async fn get_transactions_from_block(
-    provider: Provider<Http>,
+    provider: Arc<Provider<Http>>,
     block_hash_or_number: BlockId,
 ) -> Result<BlockWithTransactions> {
     match provider.get_block_with_txs(block_hash_or_number).await {
