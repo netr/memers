@@ -13,7 +13,6 @@ use memers::constants::Env;
 use memers::dex::uniswap::{self};
 use memers::utils;
 use memers::utils::setup_logger;
-
 #[derive(Debug, Clone, EthEvent)]
 pub struct PairCreated {
     pub token0: Address,

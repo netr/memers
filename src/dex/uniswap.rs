@@ -8,7 +8,7 @@ use ethers_core::{
     types::{Address, Bytes, Log, Uint8, H160, H256, U256},
 };
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error, info};
+use log::{debug, error};
 
 use crate::{
     abi::{
@@ -257,7 +257,7 @@ fn try_uniswap_topic_from_log(
                     Ok(event) => Some(UniswapTopic::PairCreated(
                         tx.to_owned(),
                         log.to_owned(),
-                        event,
+                        event.to_owned(),
                     )),
                     Err(_) => None,
                 }
@@ -269,7 +269,11 @@ fn try_uniswap_topic_from_log(
                     log.topics.clone(),
                     log.data.clone(),
                 ) {
-                    Ok(event) => Some(UniswapTopic::Transfer(tx.to_owned(), log.to_owned(), event)),
+                    Ok(event) => Some(UniswapTopic::Transfer(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event.to_owned(),
+                    )),
                     Err(_) => None,
                 }
             }
@@ -283,7 +287,7 @@ fn try_uniswap_topic_from_log(
                     Ok(event) => Some(UniswapTopic::OwnershipTransferred(
                         tx.to_owned(),
                         log.to_owned(),
-                        event,
+                        event.to_owned(),
                     )),
                     Err(_) => None,
                 }
@@ -298,7 +302,7 @@ fn try_uniswap_topic_from_log(
                     Ok(event) => Some(UniswapTopic::TrustSwapDeposit(
                         tx.to_owned(),
                         log.to_owned(),
-                        event,
+                        event.to_owned(),
                     )),
                     Err(_) => None,
                 }
@@ -313,7 +317,7 @@ fn try_uniswap_topic_from_log(
                     Ok(event) => Some(UniswapTopic::UncxOnDeposit(
                         tx.to_owned(),
                         log.to_owned(),
-                        event,
+                        event.to_owned(),
                     )),
                     Err(_) => None,
                 }
@@ -328,7 +332,7 @@ fn try_uniswap_topic_from_log(
                     Ok(event) => Some(UniswapTopic::PinkLockAdded(
                         tx.to_owned(),
                         log.to_owned(),
-                        event,
+                        event.to_owned(),
                     )),
                     Err(_) => None,
                 }
@@ -340,7 +344,11 @@ fn try_uniswap_topic_from_log(
                     log.topics.clone(),
                     log.data.clone(),
                 ) {
-                    Ok(event) => Some(UniswapTopic::Mint(tx.to_owned(), log.to_owned(), event)),
+                    Ok(event) => Some(UniswapTopic::Mint(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event.to_owned(),
+                    )),
                     Err(_) => None,
                 }
             }
@@ -351,7 +359,11 @@ fn try_uniswap_topic_from_log(
                     log.topics.clone(),
                     log.data.clone(),
                 ) {
-                    Ok(event) => Some(UniswapTopic::Burn(tx.to_owned(), log.to_owned(), event)),
+                    Ok(event) => Some(UniswapTopic::Burn(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event.to_owned(),
+                    )),
                     Err(_) => None,
                 }
             }
@@ -362,7 +374,11 @@ fn try_uniswap_topic_from_log(
                     log.topics.clone(),
                     log.data.clone(),
                 ) {
-                    Ok(event) => Some(UniswapTopic::Swap(tx.to_owned(), log.to_owned(), event)),
+                    Ok(event) => Some(UniswapTopic::Swap(
+                        tx.to_owned(),
+                        log.to_owned(),
+                        event.to_owned(),
+                    )),
                     Err(_) => None,
                 }
             }
