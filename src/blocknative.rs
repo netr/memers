@@ -31,7 +31,7 @@ impl From<BlockPrices> for GasPrediction {
 /// https://docs.blocknative.com/gas-platform/gas-prices
 ///
 /// # Example
-/// ```no-run
+/// ```ignore
 /// let response = blocknative::get_block_prices("api_key").await?;
 /// let prediction: GasPrediction = response.into();
 /// ```

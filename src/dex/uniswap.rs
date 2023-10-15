@@ -45,6 +45,9 @@ pub const MINT_TOPIC: &str = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef
 pub const BURN_TOPIC: &str = "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
 pub const SWAP_TOPIC: &str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 
+pub const UNISWAP_V2_FACTORY_ADDRESS: &str = "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f";
+pub const UNISWAP_V2_ROUTER_ADDRESS: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
+
 #[derive(Debug, Clone)]
 pub enum UniswapV2RouterFuncs {
     SwapTokensForEth(SwapTokensForEth),

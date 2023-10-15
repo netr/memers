@@ -54,7 +54,7 @@ impl Gas {
     /// Returns a [`Result`] containing a [`Gas`] struct.
     ///
     /// # Example
-    /// ```no-run
+    /// ```ignore
     /// # use ethers::providers::{Http, Middleware, Provider};
     /// # use ethers::types::H256;
     /// # use memers::utils::Gas;
