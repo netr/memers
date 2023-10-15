@@ -70,33 +70,20 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     debug!("Starting up memers");
 
-    // let gen = MultiAbigen::from_json_files("./src/abi").unwrap();
-    // println!("{:?}", gen);
-    // let gen = gen.build().unwrap();
-    // gen.write_to_crate(
-    //     "my-crate", "0.0.5", "./bindings", false
-    // ).unwrap();ga
-    // return Ok(());
-
     let env = Env::new();
     let uniswap_v2_pair_bytecode =
         std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
 
-    let _http_provider = Provider::<Http>::try_from(env.https_url.as_str())
-        .expect("could not instantiate HTTP Provider");
-    let _ws_provider = Provider::<Ws>::connect(env.wss_url.as_str()).await?;
-
     let (s, r) = bounded::<uniswap::UniswapV2RouterFuncs>(0);
-    let pending_http_provider = Arc::new(
+    let ws_provider = Arc::new(Provider::<Ws>::connect(env.wss_url.as_str()).await.unwrap());
+    let http_provider = Arc::new(
         Provider::<Http>::try_from(env.https_url.as_str())
             .expect("could not instantiate HTTP Provider"),
     );
-    let pending_ws_provider =
-        Arc::new(Provider::<Ws>::connect(env.wss_url.as_str()).await.unwrap());
 
     // run this in a tokio task
     tokio::spawn(async move {
-        uniswap::pending_transaction_stream(s, pending_ws_provider, pending_http_provider).await;
+        uniswap::pending_transaction_stream(s, ws_provider, http_provider).await;
     });
 
     tokio::spawn(async move {
@@ -116,14 +103,14 @@ async fn main() -> Result<()> {
     });
 
     let (s, r) = bounded::<uniswap::UniswapTopic>(0);
-    let tx_ws_provider = Arc::new(Provider::<Ws>::connect(env.wss_url.as_str()).await.unwrap());
-    let tx_http_provider = Arc::new(
+    let ws_provider = Arc::new(Provider::<Ws>::connect(env.wss_url.as_str()).await.unwrap());
+    let http_provider = Arc::new(
         Provider::<Http>::try_from(env.https_url.as_str())
             .expect("could not instantiate HTTP Provider"),
     );
 
     tokio::spawn(async move {
-        uniswap::transactions_from_block_stream(s, tx_ws_provider, tx_http_provider).await;
+        uniswap::transactions_from_block_stream(s, ws_provider, http_provider).await;
     });
 
     tokio::spawn(async move {
