@@ -20,7 +20,7 @@ use memers::{eth, utils};
 
 use ethers_contract::{BaseContract, EthEvent};
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 #[derive(Debug, Clone, EthEvent)]
 pub struct PairCreated {
     pub token0: Address,
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    None => warn!(
+                    None => debug!(
                         "{}",
                         TxError::new(
                             "get_tx".to_string(),
