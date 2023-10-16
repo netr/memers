@@ -1,14 +1,13 @@
-#![allow(dead_code)]
-
 use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, unbounded};
 use ethers_contract::EthEvent;
-use ethers_core::types::{Address, H160, H256, U256};
+use ethers_core::types::{Address, H160, U256};
 use ethers_providers::{Http, Middleware, Provider, Ws};
 use log::{debug, info};
+use memers::abi::uniswap_v2_pair::UniswapV2Pair;
 use memers::constants::Env;
 use memers::dex::uniswap::{self};
 use memers::eth::constants::WETH_ADDRESS;
@@ -22,50 +21,7 @@ pub struct PairCreated {
     pub nonce: U256,
 }
 
-#[derive(Debug, Clone)]
-struct TxError {
-    target: String,
-    reason: String,
-    hash: H256,
-    error: String,
-}
-
-impl TxError {
-    fn new(target: String, reason: String, hash: H256, error: String) -> Self {
-        Self {
-            target,
-            reason,
-            hash,
-            error,
-        }
-    }
-}
-
-impl std::fmt::Display for TxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if self.error != "" {
-            write!(
-                f,
-                "[{}] {} - error: {} - hash: {}",
-                self.target,
-                self.reason,
-                self.error,
-                utils::to_hex_str(self.hash.as_bytes())
-            )
-        } else {
-            write!(
-                f,
-                "[{}] {} - hash: {}",
-                self.target,
-                self.reason,
-                utils::to_hex_str(self.hash.as_bytes())
-            )
-        }
-    }
-}
-
 #[tokio::main]
-#[allow(unreachable_code)]
 async fn main() -> Result<()> {
     setup_logger(log::LevelFilter::Info)?;
     dotenvy::dotenv().ok();
@@ -104,6 +60,8 @@ async fn main() -> Result<()> {
         uniswap::transactions_from_block_stream(Arc::new(s), ws_provider, http_provider).await;
     });
 
+    let weth = H160::from_str(WETH_ADDRESS).unwrap();
+
     tokio::spawn(async move {
         for msg in r.iter() {
             match msg {
@@ -120,7 +78,6 @@ async fn main() -> Result<()> {
                     );
                 }
                 uniswap::UniswapTopic::PairCreated(tx, _log, event) => {
-                    let weth = H160::from_str(WETH_ADDRESS).unwrap();
                     let erc20_addr = if event.token_0.ne(&weth) {
                         event.token_0
                     } else {
@@ -168,7 +125,7 @@ async fn main() -> Result<()> {
                         utils::to_hex_str(event.token_address.as_bytes()),
                         utils::to_hex_str(event.withdrawal_address.as_bytes()),
                         event.amount,
-                        event.unlock_time,
+                        utc_timestamp_to_date(event.unlock_time.as_u64()),
                     );
                 }
                 uniswap::UniswapTopic::UncxOnDeposit(tx, _log, event) => {
@@ -180,7 +137,7 @@ async fn main() -> Result<()> {
                         utils::to_hex_str(event.user.as_bytes()),
                         event.amount,
                         event.lock_date,
-                        event.unlock_date,
+                        utc_timestamp_to_date(event.unlock_date.as_u64()),
                     );
                 }
                 uniswap::UniswapTopic::PinkLockAdded(tx, _log, event) => {
@@ -191,28 +148,42 @@ async fn main() -> Result<()> {
                         utils::to_hex_str(event.token.as_bytes()),
                         utils::to_hex_str(event.owner.as_bytes()),
                         event.amount,
-                        event.unlock_date,
+                        utc_timestamp_to_date(event.unlock_date.as_u64()),
                     );
                 }
                 uniswap::UniswapTopic::Mint(tx, log, event) => {
-                    info!(
-                        "[[!* ADD LIQUIDITY *!]] sender: {} / pair: {} / amount_0: {} / amount_1: {} / hash: {}",
-                        utils::to_hex_str(event.sender.as_bytes()),
-                        utils::to_hex_str(log.address.as_bytes()),
-                        event.amount_0,
-                        event.amount_1,
-                        utils::to_hex_str(tx.hash.as_bytes()),
-                    );
+                    let http_provider =
+                        Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
+                    let pair = UniswapV2Pair::new(log.address, http_provider);
+                    let token0 = pair.token_0().await.unwrap_or_default();
+                    let token1 = pair.token_1().await.unwrap_or_default();
+                    if token0.eq(&weth) || token1.eq(&weth) {
+                        info!(
+                            "[[!* ADD LIQUIDITY *!]] sender: {} / pair: {} / amount_0: {} / amount_1: {} / hash: {}",
+                            utils::to_hex_str(event.sender.as_bytes()),
+                            utils::to_hex_str(log.address.as_bytes()),
+                            event.amount_0,
+                            event.amount_1,
+                            utils::to_hex_str(tx.hash.as_bytes()),
+                        );
+                    }
                 }
                 uniswap::UniswapTopic::Burn(_tx, log, event) => {
-                    info!(
-                        "[[!* REMOVE LIQUIDITY *!]] sender: {} / pair: {} / to: {} / amount_0: {} / amount_1: {}",
-                        utils::to_hex_str(event.sender.as_bytes()),
-                        utils::to_hex_str(log.address.as_bytes()),
-                        utils::to_hex_str(event.to.as_bytes()),
-                        event.amount_0,
-                        event.amount_1,
-                    );
+                    let http_provider =
+                        Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
+                    let pair = UniswapV2Pair::new(log.address, http_provider);
+                    let token0 = pair.token_0().await.unwrap_or_default();
+                    let token1 = pair.token_1().await.unwrap_or_default();
+                    if token0.eq(&weth) || token1.eq(&weth) {
+                        info!(
+                            "[[!* REMOVE LIQUIDITY *!]] sender: {} / pair: {} / to: {} / amount_0: {} / amount_1: {}",
+                            utils::to_hex_str(event.sender.as_bytes()),
+                            utils::to_hex_str(log.address.as_bytes()),
+                            utils::to_hex_str(event.to.as_bytes()),
+                            event.amount_0,
+                            event.amount_1,
+                        );
+                    }
                 }
                 uniswap::UniswapTopic::Swap(tx, _log, event) => {
                     debug!(
@@ -267,6 +238,10 @@ async fn is_uniswap_pair(provider: Arc<Provider<Http>>, address: Address, byteco
     }
 }
 
+fn utc_timestamp_to_date(timestamp: u64) -> chrono::NaiveDateTime {
+    chrono::NaiveDateTime::from_timestamp_opt(timestamp as i64, 0).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +255,15 @@ mod tests {
         let provider = Arc::new(Provider::<Http>::try_from("http://localhost:8545").unwrap());
         let address = H160::from_str("0x8bfc25ae2ac1ee299f541fc300d8737ef419066d").unwrap();
         assert!(is_uniswap_pair(provider, address, &uniswap_v2_pair_bytecode).await);
+    }
+
+    #[test]
+    fn it_should_convert_timestamp_to_date() {
+        let timestamp = 1709269020;
+        let date = utc_timestamp_to_date(timestamp);
+        assert_eq!(
+            date.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-03-01 04:57:00"
+        );
     }
 }
