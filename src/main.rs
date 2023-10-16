@@ -4,11 +4,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use crossbeam_channel::{bounded, select, unbounded};
+use crossbeam_channel::{bounded, unbounded};
 use ethers_contract::EthEvent;
 use ethers_core::types::{Address, H160, H256, U256};
 use ethers_providers::{Http, Middleware, Provider, Ws};
-use log::{debug, error, info, warn};
+use log::{debug, info};
 use memers::constants::Env;
 use memers::dex::uniswap::{self};
 use memers::eth::constants::WETH_ADDRESS;
@@ -121,24 +121,23 @@ async fn main() -> Result<()> {
                 }
                 uniswap::UniswapTopic::PairCreated(tx, _log, event) => {
                     let weth = H160::from_str(WETH_ADDRESS).unwrap();
-                    let token_addr = if event.token_0.ne(&weth) {
+                    let erc20_addr = if event.token_0.ne(&weth) {
                         event.token_0
                     } else {
                         event.token_1
                     };
 
-                    let start_time = std::time::Instant::now();
-                    let erc20_provider =
+                    let http_provider =
                         Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
                     if let Ok(contract) = memers::eth::contract::get_erc20_token_vars(
-                        token_addr,
+                        erc20_addr,
                         tx.from,
-                        erc20_provider,
+                        http_provider,
                     )
                     .await
                     {
                         info!(
-                            "[[** PAIR CREATED **]] from: {} / token: {} / pair: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / hash: {} / taken: {} ms",
+                            "[[** PAIR CREATED **]] from: {} / token: {} / pair: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / hash: {}",
                             utils::to_hex_str(contract.creator().as_bytes()),
                             utils::to_hex_str(contract.address().as_bytes()),
                             utils::to_hex_str(event.pair.as_bytes()),
@@ -147,35 +146,8 @@ async fn main() -> Result<()> {
                             contract.decimals(),
                             contract.total_supply(),
                             utils::to_hex_str(tx.hash.as_bytes()),
-                            start_time.elapsed().as_millis(),
                         );
                     }
-                    // let erc20_provider =
-                    //     Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
-                    // let start_time = std::time::Instant::now();
-                    // tokio::spawn(async move {
-                    //     warn!("inside of the tokio spawn for pair");
-                    //     if let Ok(contract) = memers::eth::contract::get_erc20_token_vars(
-                    //         token_addr,
-                    //         tx.from,
-                    //         erc20_provider,
-                    //     )
-                    //     .await
-                    //     {
-                    //         info!(
-                    //             "[[** PAIR CREATED **]] from: {} / token: {} / pair: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / hash: {} / taken: {} ms",
-                    //             utils::to_hex_str(contract.creator().as_bytes()),
-                    //             utils::to_hex_str(contract.address().as_bytes()),
-                    //             utils::to_hex_str(event.pair.as_bytes()),
-                    //             contract.name(),
-                    //             contract.symbol(),
-                    //             contract.decimals(),
-                    //             contract.total_supply(),
-                    //             utils::to_hex_str(tx.hash.as_bytes()),
-                    //             start_time.elapsed().as_millis(),
-                    //         );
-                    //     }
-                    // });
                 }
                 uniswap::UniswapTopic::OwnershipTransferred(tx, _log, event) => {
                     if event.new_owner.is_zero() {
@@ -258,22 +230,24 @@ async fn main() -> Result<()> {
                     let dead_address =
                         H160::from_str(memers::eth::constants::DEAD_ADDRESS).unwrap();
                     if event.to.eq(&dead_address) && !event.from.is_zero() {
-                        let log_address = log.address.clone();
-                        let bytecode_client =
+                        let http_provider =
                             Arc::new(Provider::<Http>::try_from(env.https_url.as_str()).unwrap());
-                        let bc = uniswap_v2_pair_bytecode.clone();
-                        // tokio::spawn(async move {
-                        if is_uniswap_pair(&bytecode_client, log_address, &bc).await {
+                        if is_uniswap_pair(
+                            http_provider,
+                            log.address,
+                            &uniswap_v2_pair_bytecode.clone(),
+                        )
+                        .await
+                        {
                             info!(
                                 "[[*~ LP BURNED ~*]] from: {} - lp token: {} / to: {} / value: {} / hash: {}",
                                 utils::to_hex_str(tx.from.as_bytes()),
-                                utils::to_hex_str(log_address.as_bytes()),
+                                utils::to_hex_str(log.address.as_bytes()),
                                 utils::to_hex_str(event.to.as_bytes()),
                                 event.value,
                                 utils::to_hex_str(tx.hash.as_bytes()),
                             );
                         }
-                        // });
                     }
                 }
             }
@@ -286,21 +260,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// TODO: benchmark this get_code function. It could be the cause of the delay when compared to golang build.
-async fn is_uniswap_pair(provider: &Provider<Http>, address: Address, bytecode: &str) -> bool {
-    let start_time = std::time::Instant::now();
+async fn is_uniswap_pair(provider: Arc<Provider<Http>>, address: Address, bytecode: &str) -> bool {
     match provider.get_code(address, None).await {
-        Ok(code) => {
-            info!("get_code took {}ms", start_time.elapsed().as_millis());
-            code.to_string() == bytecode
-        }
-        Err(_) => {
-            info!(
-                "[failed] get_code took {}ms",
-                start_time.elapsed().as_millis()
-            );
-            false
-        }
+        Ok(code) => code.to_string() == bytecode.to_string(),
+        Err(_) => false,
     }
 }
 
@@ -314,8 +277,8 @@ mod tests {
     async fn it_should_get_byte_code() {
         let uniswap_v2_pair_bytecode =
             std::fs::read_to_string("./src/abi/uniswap_v2_pair_bytecode.txt").unwrap();
-        let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+        let provider = Arc::new(Provider::<Http>::try_from("http://localhost:8545").unwrap());
         let address = H160::from_str("0x8bfc25ae2ac1ee299f541fc300d8737ef419066d").unwrap();
-        assert!(is_uniswap_pair(&provider, address, &uniswap_v2_pair_bytecode).await);
+        assert!(is_uniswap_pair(provider, address, &uniswap_v2_pair_bytecode).await);
     }
 }

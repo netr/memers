@@ -8,7 +8,7 @@ use ethers_core::{
     types::{Address, Bytes, Log, Uint8, H160, H256, U256},
 };
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error, info};
+use log::{debug, error};
 
 use crate::{
     abi::{
@@ -235,7 +235,7 @@ pub async fn transactions_from_block_stream(
             Err(e) => error!("Could not get transactions from block: {}", e),
         }
 
-        info!(
+        debug!(
             "New block: {} - Time to process: {}",
             block.number.unwrap(),
             start_time.elapsed().as_millis()
@@ -274,7 +274,7 @@ fn try_uniswap_topic_from_log(
         return match to_hex_str(topic.as_bytes()).as_str() {
             PAIR_CREATED_TOPIC => {
                 let factory = UniswapV2Factory::new(
-                    H160::from_str("UNISWAP_V2_FACTORY_ADDRESS").unwrap(),
+                    H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(),
                     provider,
                 );
                 match factory.decode_event::<PairCreatedFilter>(
