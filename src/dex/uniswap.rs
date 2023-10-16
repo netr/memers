@@ -162,7 +162,7 @@ pub fn try_into_uniswap_v2_router(
 }
 
 pub async fn transactions_from_block_stream(
-    s: Arc<Sender<UniswapTopic>>,
+    s: Sender<UniswapTopic>,
     ws_provider: Arc<Provider<Ws>>,
     http_provider: Arc<Provider<Http>>,
 ) {

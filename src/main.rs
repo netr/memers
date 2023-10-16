@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     );
 
     tokio::spawn(async move {
-        uniswap::transactions_from_block_stream(Arc::new(s), ws_provider, http_provider).await;
+        uniswap::transactions_from_block_stream(s, ws_provider, http_provider).await;
     });
 
     let weth = H160::from_str(WETH_ADDRESS).unwrap();
