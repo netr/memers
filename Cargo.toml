@@ -17,7 +17,6 @@ ethers-core = "2.0"
 ethers-providers = "2.0"
 ethers-contract = "2.0"
 ethers = { version = "2.0", features = ["abigen", "ws"] }
-
 colored = "2.0.4"
 log = "0.4.20"
 fern = { version = "0.6.2", features = ["colored"] }

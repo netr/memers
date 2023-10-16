@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use colored::Colorize;
 use crossbeam_channel::{bounded, unbounded};
 use ethers_contract::EthEvent;
 use ethers_core::types::{Address, H160, U256};
@@ -65,16 +66,16 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         for msg in r.iter() {
             match msg {
-                uniswap::UniswapTopic::ERC20Deployed(tx, contract) => {
+                uniswap::UniswapTopic::ERC20Deployed(_tx, contract) => {
                     info!(
-                        "!! CONTRACT DEPLOYED !! from: {} / contract: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / hash: {}",
-                        utils::to_hex_str(contract.creator().as_bytes()),
-                        utils::to_hex_str(contract.address().as_bytes()),
-                        contract.name(),
+                        "{} name: {} / symbol: {} / decimals: {} / total_supply: {} / from: {} / contract: {}",
+                        "CONTRACT_DEPLOYED".blue().bold(),
+                        contract.name().white(),
                         contract.symbol(),
                         contract.decimals(),
-                        contract.total_supply(),
-                        utils::to_hex_str(tx.hash.as_bytes()),
+                        format_units(contract.total_supply(), contract.decimals()).white(),
+                        utils::to_hex_str(contract.creator().as_bytes()),
+                        utils::to_hex_str(contract.address().as_bytes()),
                     );
                 }
                 uniswap::UniswapTopic::PairCreated(tx, _log, event) => {
@@ -94,22 +95,23 @@ async fn main() -> Result<()> {
                     .await
                     {
                         info!(
-                            "[[** PAIR CREATED **]] from: {} / token: {} / pair: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / hash: {}",
-                            utils::to_hex_str(contract.creator().as_bytes()),
-                            utils::to_hex_str(contract.address().as_bytes()),
+                            "{} pair: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / from: {} / token: {}",
+                            "PAIR_CREATED".cyan().bold(),
                             utils::to_hex_str(event.pair.as_bytes()),
-                            contract.name(),
+                            contract.name().white(),
                             contract.symbol(),
                             contract.decimals(),
-                            contract.total_supply(),
-                            utils::to_hex_str(tx.hash.as_bytes()),
+                            format_units(contract.total_supply(), contract.decimals()).white(),
+                            utils::to_hex_str(contract.creator().as_bytes()),
+                            utils::to_hex_str(contract.address().as_bytes()),
                         );
                     }
                 }
                 uniswap::UniswapTopic::OwnershipTransferred(tx, _log, event) => {
                     if event.new_owner.is_zero() {
                         info!(
-                            "[[*v OWNERSHIP RENOUNCED v*]] from: {} / to: {} / prev_owner: {} / new_owner: {}",
+                            "{} from: {} / to: {} / prev_owner: {} / new_owner: {}",
+                            "OWNERSHIP_RENOUNCED".red().bold(),
                             utils::to_hex_str(tx.from.as_bytes()),
                             utils::to_hex_str(tx.to.as_bytes()),
                             utils::to_hex_str(event.previous_owner.as_bytes()),
@@ -119,7 +121,8 @@ async fn main() -> Result<()> {
                 }
                 uniswap::UniswapTopic::TrustSwapDeposit(tx, _log, event) => {
                     info!(
-                        "[[*# TRUST SWAP LP LOCK #*]] from: {} / to: {} / token: {}, withdrawal to: {} / amount: {} / unlock time: {}",
+                        "{} from: {} / to: {} / token: {}, withdrawal to: {} / amount: {} / unlock time: {}",
+                        "TRUSTSWAP_LP_LOCK".yellow().bold(),
                         utils::to_hex_str(tx.from.as_bytes()),
                         utils::to_hex_str(tx.to.as_bytes()),
                         utils::to_hex_str(event.token_address.as_bytes()),
@@ -130,7 +133,8 @@ async fn main() -> Result<()> {
                 }
                 uniswap::UniswapTopic::UncxOnDeposit(tx, _log, event) => {
                     info!(
-                        "[[*# UNCX LP LOCK #*]] from: {} / to: {} / token: {} / user: {} / amount: {} / lock date: {} / unlock date: {}",
+                        "{} from: {} / to: {} / token: {} / user: {} / amount: {} / lock date: {} / unlock date: {}",
+                        "UNCX_LP_LOCK".yellow().bold(),
                         utils::to_hex_str(tx.from.as_bytes()),
                         utils::to_hex_str(tx.to.as_bytes()),
                         utils::to_hex_str(event.lp_token.as_bytes()),
@@ -142,7 +146,8 @@ async fn main() -> Result<()> {
                 }
                 uniswap::UniswapTopic::PinkLockAdded(tx, _log, event) => {
                     info!(
-                        "[[*# PINK LP LOCK #*]] from: {} / to: {} / token: {} / owner: {} / amount: {} / unlock date: {}",
+                        "{} from: {} / to: {} / token: {} / owner: {} / amount: {} / unlock date: {}",
+                        "PINK_LP_LOCK".yellow().bold(),
                         utils::to_hex_str(tx.from.as_bytes()),
                         utils::to_hex_str(tx.to.as_bytes()),
                         utils::to_hex_str(event.token.as_bytes()),
@@ -159,7 +164,8 @@ async fn main() -> Result<()> {
                     let token1 = pair.token_1().await.unwrap_or_default();
                     if token0.eq(&weth) || token1.eq(&weth) {
                         info!(
-                            "[[!* ADD LIQUIDITY *!]] sender: {} / pair: {} / amount_0: {} / amount_1: {} / hash: {}",
+                            "{} sender: {} / pair: {} / amount_0: {} / amount_1: {} / hash: {}",
+                            "ADD_LIQUIDITY".white().bold(),
                             utils::to_hex_str(event.sender.as_bytes()),
                             utils::to_hex_str(log.address.as_bytes()),
                             event.amount_0,
@@ -176,7 +182,8 @@ async fn main() -> Result<()> {
                     let token1 = pair.token_1().await.unwrap_or_default();
                     if token0.eq(&weth) || token1.eq(&weth) {
                         info!(
-                            "[[!* REMOVE LIQUIDITY *!]] sender: {} / pair: {} / to: {} / amount_0: {} / amount_1: {}",
+                            "{} sender: {} / pair: {} / to: {} / amount_0: {} / amount_1: {}",
+                            "REMOVE_LIQUIDITY".magenta().bold(),
                             utils::to_hex_str(event.sender.as_bytes()),
                             utils::to_hex_str(log.address.as_bytes()),
                             utils::to_hex_str(event.to.as_bytes()),
@@ -211,7 +218,8 @@ async fn main() -> Result<()> {
                         .await
                         {
                             info!(
-                                "[[*~ LP BURNED ~*]] from: {} - lp token: {} / to: {} / value: {} / hash: {}",
+                                "{} from: {} - lp token: {} / to: {} / value: {} / hash: {}",
+                                "LP_BURNED".yellow().bold(),
                                 utils::to_hex_str(tx.from.as_bytes()),
                                 utils::to_hex_str(log.address.as_bytes()),
                                 utils::to_hex_str(event.to.as_bytes()),
@@ -242,6 +250,32 @@ fn utc_timestamp_to_date(timestamp: u64) -> chrono::NaiveDateTime {
     chrono::NaiveDateTime::from_timestamp_opt(timestamp as i64, 0).unwrap()
 }
 
+fn format_units(value: U256, decimals: u8) -> String {
+    let val = ethers_core::utils::format_units(value, decimals as i32).unwrap_or_default();
+    let (left, right) = val.split_once('.').unwrap_or((val.as_str(), ""));
+
+    let left = left
+        .chars()
+        .rev()
+        .enumerate()
+        .fold(String::new(), |mut acc, (i, c)| {
+            if i != 0 && i % 3 == 0 {
+                acc.push('_');
+            }
+            acc.push(c);
+            acc
+        })
+        .chars()
+        .rev()
+        .collect::<String>();
+
+    if right.chars().all(|c| c == '0') {
+        return left;
+    }
+
+    format!("{}.{}", left, right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +299,19 @@ mod tests {
             date.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2024-03-01 04:57:00"
         );
+    }
+
+    #[test]
+    fn format_units_with_trailing_numbers() {
+        let number = U256::from_dec_str("1395633240001230456000").unwrap();
+        let text = format_units(number, 9);
+        assert_eq!(text, "1_395_633_240_001.230456000");
+    }
+
+    #[test]
+    fn format_units_trim_zeros_from_end() {
+        let number = U256::from_dec_str("50000000000000000000000000").unwrap();
+        let text = format_units(number, 18);
+        assert_eq!(text, "50_000_000");
     }
 }
