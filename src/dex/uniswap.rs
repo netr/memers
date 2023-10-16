@@ -8,7 +8,7 @@ use ethers_core::{
     types::{Address, Bytes, Log, Uint8, H160, H256, U256},
 };
 use ethers_providers::{Http, Middleware, Provider, StreamExt, Ws};
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::{
     abi::{
@@ -121,9 +121,9 @@ fn map_liquidity_function(
     contract: &BaseContract,
     tx_input: &Bytes,
 ) -> Option<UniswapV2RouterFuncs> {
-    if let Ok(func) = contract.decode_input::<AddLiquidity, _>(tx_input) {
-        return Some(UniswapV2RouterFuncs::AddLiquidity(func));
-    }
+    // if let Ok(func) = contract.decode_input::<AddLiquidity, _>(tx_input) {
+    //     return Some(UniswapV2RouterFuncs::AddLiquidity(func));
+    // }
     if let Ok(func) = contract.decode_input::<AddLiquidityETH, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::AddLiquidityETH(func));
     }
@@ -138,12 +138,12 @@ fn map_remove_liquidity_function(
     if let Ok(func) = contract.decode_input::<RemoveLiquidityEthWithPermit, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidityEthWithPermit(func));
     }
-    if let Ok(func) = contract.decode_input::<RemoveLiquidityWithPermit, _>(tx_input) {
-        return Some(UniswapV2RouterFuncs::RemoveLiquidityWithPermit(func));
-    }
-    if let Ok(func) = contract.decode_input::<RemoveLiquidity, _>(tx_input) {
-        return Some(UniswapV2RouterFuncs::RemoveLiquidity(func));
-    }
+    // if let Ok(func) = contract.decode_input::<RemoveLiquidityWithPermit, _>(tx_input) {
+    //     return Some(UniswapV2RouterFuncs::RemoveLiquidityWithPermit(func));
+    // }
+    // if let Ok(func) = contract.decode_input::<RemoveLiquidity, _>(tx_input) {
+    //     return Some(UniswapV2RouterFuncs::RemoveLiquidity(func));
+    // }
     if let Ok(func) = contract.decode_input::<RemoveLiquidityETH, _>(tx_input) {
         return Some(UniswapV2RouterFuncs::RemoveLiquidityETH(func));
     }
@@ -162,14 +162,14 @@ pub fn try_into_uniswap_v2_router(
 }
 
 pub async fn transactions_from_block_stream(
-    s: Sender<UniswapTopic>,
+    s: Arc<Sender<UniswapTopic>>,
     ws_provider: Arc<Provider<Ws>>,
     http_provider: Arc<Provider<Http>>,
 ) {
     let mut stream = ws_provider.subscribe_blocks().await.expect("should work");
 
     while let Some(block) = stream.next().await {
-        debug!("New block: {}", block.number.unwrap());
+        let start_time = std::time::Instant::now();
         match eth::transactions::get_transactions_from_block(
             http_provider.clone(),
             ethers_core::types::BlockId::Hash(block.hash.unwrap()),
@@ -178,6 +178,27 @@ pub async fn transactions_from_block_stream(
         {
             Ok(block_with_txs) => {
                 for tx in block_with_txs.transactions {
+                    // If the transaction's to address is Zero, then we know it's a contract creation
+                    if tx.to.is_zero() {
+                        let contract_address =
+                            ethers::core::utils::get_contract_address(&tx.from.into(), tx.nonce);
+
+                        let provider = http_provider.clone();
+                        let s = s.clone();
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            if let Ok(contract) = crate::eth::contract::get_erc20_token_vars(
+                                contract_address,
+                                tx.from,
+                                provider,
+                            )
+                            .await
+                            {
+                                s.send(UniswapTopic::ERC20Deployed(tx, contract)).unwrap();
+                            }
+                        });
+                    }
+
                     match http_provider.clone().get_transaction_receipt(tx.hash).await {
                         Ok(Some(receipt)) => {
                             receipt.logs.iter().for_each(|log| {
@@ -213,6 +234,12 @@ pub async fn transactions_from_block_stream(
             }
             Err(e) => error!("Could not get transactions from block: {}", e),
         }
+
+        info!(
+            "New block: {} - Time to process: {}",
+            block.number.unwrap(),
+            start_time.elapsed().as_millis()
+        );
     }
 }
 
@@ -226,6 +253,7 @@ fn get_topic_from_log(log: &ethers_core::types::Log) -> Option<H256> {
 
 #[derive(Debug, Clone)]
 pub enum UniswapTopic {
+    ERC20Deployed(Transaction, crate::eth::contract::ERC20Token),
     PairCreated(Transaction, Log, PairCreatedFilter),
     Transfer(Transaction, Log, TransferFilter),
     OwnershipTransferred(Transaction, Log, OwnershipTransferredFilter),
@@ -246,10 +274,10 @@ fn try_uniswap_topic_from_log(
         return match to_hex_str(topic.as_bytes()).as_str() {
             PAIR_CREATED_TOPIC => {
                 let factory = UniswapV2Factory::new(
-                    H160::from_str(UNISWAP_V2_FACTORY_ADDRESS).unwrap(),
+                    H160::from_str("UNISWAP_V2_FACTORY_ADDRESS").unwrap(),
                     provider,
                 );
-                match factory.clone().decode_event::<PairCreatedFilter>(
+                match factory.decode_event::<PairCreatedFilter>(
                     "PairCreated",
                     log.topics.clone(),
                     log.data.clone(),
@@ -264,7 +292,7 @@ fn try_uniswap_topic_from_log(
             }
             eth::constants::TRANSFER_TOPIC => {
                 let erc20 = ERC20::new(log.address, provider);
-                match erc20.clone().decode_event::<TransferFilter>(
+                match erc20.decode_event::<TransferFilter>(
                     "Transfer",
                     log.topics.clone(),
                     log.data.clone(),
@@ -279,7 +307,7 @@ fn try_uniswap_topic_from_log(
             }
             eth::constants::OWNERSHIP_TRANSFERRED_TOPIC => {
                 let erc20 = ERC20::new(log.address, provider);
-                match erc20.clone().decode_event::<OwnershipTransferredFilter>(
+                match erc20.decode_event::<OwnershipTransferredFilter>(
                     "OwnershipTransferred",
                     log.topics.clone(),
                     log.data.clone(),
@@ -294,7 +322,7 @@ fn try_uniswap_topic_from_log(
             }
             eth::constants::TRUST_SWAP_DEPOSIT_TOPIC => {
                 let trust_swap = TrustSwapLpLocker::new(log.address, provider);
-                match trust_swap.clone().decode_event::<DepositFilter>(
+                match trust_swap.decode_event::<DepositFilter>(
                     "Deposit",
                     log.topics.clone(),
                     log.data.clone(),
@@ -309,8 +337,8 @@ fn try_uniswap_topic_from_log(
             }
             eth::constants::UNCX_ON_DEPOSIT_TOPIC => {
                 let uncx = UncxLpLocker::new(log.address, provider);
-                match uncx.clone().decode_event::<OnDepositFilter>(
-                    "OnDeposit",
+                match uncx.decode_event::<OnDepositFilter>(
+                    "onDeposit",
                     log.topics.clone(),
                     log.data.clone(),
                 ) {
@@ -324,7 +352,7 @@ fn try_uniswap_topic_from_log(
             }
             eth::constants::PINK_LOCK_ADDED_TOPIC => {
                 let pink = PinkLock::new(log.address, provider);
-                match pink.clone().decode_event::<LockAddedFilter>(
+                match pink.decode_event::<LockAddedFilter>(
                     "LockAdded",
                     log.topics.clone(),
                     log.data.clone(),
@@ -339,11 +367,8 @@ fn try_uniswap_topic_from_log(
             }
             MINT_TOPIC => {
                 let pair = UniswapV2Pair::new(log.address, provider);
-                match pair.clone().decode_event::<MintFilter>(
-                    "Mint",
-                    log.topics.clone(),
-                    log.data.clone(),
-                ) {
+                match pair.decode_event::<MintFilter>("Mint", log.topics.clone(), log.data.clone())
+                {
                     Ok(event) => Some(UniswapTopic::Mint(
                         tx.to_owned(),
                         log.to_owned(),
@@ -354,11 +379,8 @@ fn try_uniswap_topic_from_log(
             }
             BURN_TOPIC => {
                 let pair = UniswapV2Pair::new(log.address, provider);
-                match pair.clone().decode_event::<BurnFilter>(
-                    "Burn",
-                    log.topics.clone(),
-                    log.data.clone(),
-                ) {
+                match pair.decode_event::<BurnFilter>("Burn", log.topics.clone(), log.data.clone())
+                {
                     Ok(event) => Some(UniswapTopic::Burn(
                         tx.to_owned(),
                         log.to_owned(),
@@ -369,11 +391,8 @@ fn try_uniswap_topic_from_log(
             }
             SWAP_TOPIC => {
                 let pair = UniswapV2Pair::new(log.address, provider);
-                match pair.clone().decode_event::<SwapFilter>(
-                    "Swap",
-                    log.topics.clone(),
-                    log.data.clone(),
-                ) {
+                match pair.decode_event::<SwapFilter>("Swap", log.topics.clone(), log.data.clone())
+                {
                     Ok(event) => Some(UniswapTopic::Swap(
                         tx.to_owned(),
                         log.to_owned(),
