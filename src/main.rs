@@ -68,14 +68,14 @@ async fn main() -> Result<()> {
             match msg {
                 uniswap::UniswapTopic::ERC20Deployed(_tx, contract) => {
                     info!(
-                        "{} name: {} / symbol: {} / decimals: {} / total_supply: {} / from: {} / contract: {}",
+                        "{} contract: {} / name: {} / symbol: {} / decimals: {} / total_supply: {} / from: {}",
                         "CONTRACT_DEPLOYED".blue().bold(),
+                        utils::to_hex_str(contract.address().as_bytes()),
                         contract.name().white(),
                         contract.symbol(),
                         contract.decimals(),
                         format_units(contract.total_supply(), contract.decimals()).white(),
                         utils::to_hex_str(contract.creator().as_bytes()),
-                        utils::to_hex_str(contract.address().as_bytes()),
                     );
                 }
                 uniswap::UniswapTopic::PairCreated(tx, _log, event) => {
